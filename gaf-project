@@ -1,0 +1,930 @@
+#!/usr/bin/env perl
+
+use strict;
+use Gtk2;
+use Time::HiRes qw(usleep);
+use Glib qw(TRUE FALSE);
+use Data::Dumper;
+use POSIX ":sys_wait_h";
+use File::Copy;
+use Storable;
+
+Gtk2->init;
+
+$SIG{CHLD} = \&handleSigChld;
+$SIG{SEGV} = "IGNORE";
+
+addStockIcon("gschem", "Open _Schematic", "S", "/usr/share/icons/hicolor/scalable/apps/geda-gschem.svg");
+addStockIcon("pcb", "Open _PCB", "P", "/usr/share/icons/hicolor/scalable/apps/pcb.svg");
+addStockIcon("gattrib", "Open _Attribute Editor", "A", "/usr/share/icons/hicolor/scalable/apps/geda-gattrib.svg");
+addStockIcon("gsch2pcb", "_Update PCB From Schematic", "U", "/usr/share/icons/hicolor/scalable/mimetypes/application-x-geda-gsch2pcb-project.svg");
+addStockIcon("export-pdf", "Export Schematic _PDF", "P", "/usr/share/icons/breeze/mimetypes/32/application-pdf.svg");
+addStockIcon("export-gerber", "Export PCB _Gerbers", "G", "/usr/share/icons/hicolor/scalable/mimetypes/application-x-gerber.svg");
+addStockIcon("export-blender", "Export PCB _Blender Files", "B", "/usr/share/icons/hicolor/scalable/apps/blender.svg");
+
+my $window = new Gtk2::Window;
+
+my $HOME=$ENV{HOME};
+
+my $project = undef;
+my $settings = undef;
+my $preferencesDialog = undef;
+
+$settings->{elements}[0] = "/home/matt/Dropbox/gEDA/Components";
+$settings->{projects}="/home/matt/Dropbox/Projects";
+$settings->{export}->{gerber}->{format}="Seeed";
+$settings->{export}->{gerber}->{outline}=FALSE;
+
+loadSettings();
+
+my $menuStructure;
+my $toolbarStructure;
+
+$window->signal_connect('delete_event' => sub { Gtk2->main_quit; });
+
+my $vbox = Gtk2::VBox->new(FALSE, 5);
+
+my $menu_bar = new Gtk2::MenuBar;
+
+my $menu_item_project = Gtk2::MenuItem->new('_Project');
+$menu_item_project->set_submenu(projectmenu());
+$menu_bar->append($menu_item_project);
+
+my $menu_item_tools = Gtk2::MenuItem->new('_Tools');
+$menu_item_tools->set_submenu(toolsmenu());
+$menu_bar->append($menu_item_tools);
+
+$vbox->pack_start($menu_bar, FALSE, FALSE, 0);
+
+my $tt = Gtk2::Tooltips->new();
+
+my $toolbar = Gtk2::Toolbar->new;
+$toolbar->set_icon_size('large-toolbar');
+
+my $tbOpen = Gtk2::ToolButton->new_from_stock('gtk-open');
+$tbOpen->set_tooltip($tt, "Open Project", "");
+$tbOpen->signal_connect("clicked", \&action_project_open);
+$toolbar->insert($tbOpen, -1);
+$toolbarStructure->{open} = $tbOpen;
+
+my $tbNew = Gtk2::ToolButton->new_from_stock('gtk-new');
+$tbNew->set_tooltip($tt, "New Project", "");
+$tbNew->signal_connect("clicked", \&action_project_new);
+$toolbar->insert($tbNew, -1);
+$toolbarStructure->{"new"} = $tbNew;
+
+my $spacer1 = Gtk2::SeparatorToolItem->new;
+$spacer1->set_draw(FALSE);
+$spacer1->set_expand(FALSE);
+$toolbar->insert($spacer1, -1);
+
+my $tbGschem = Gtk2::ToolButton->new_from_stock('gschem');
+$tbGschem->set_tooltip($tt, "Open Schematic", "");
+$tbGschem->signal_connect("clicked", \&action_project_gschem);
+$toolbar->insert($tbGschem, -1);
+$toolbarStructure->{gschem} = $tbGschem;
+
+my $tbPcb = Gtk2::ToolButton->new_from_stock('pcb');
+$tbPcb->set_tooltip($tt, "Open PCB", "");
+$tbPcb->signal_connect("clicked", \&action_project_pcb);
+$toolbar->insert($tbPcb, -1);
+$toolbarStructure->{pcb} = $tbPcb;
+
+my $tbGsch2pcb = Gtk2::ToolButton->new_from_stock('gsch2pcb');
+$tbGsch2pcb->set_tooltip($tt, "Update PCB From Schematic", "");
+$tbGsch2pcb->signal_connect("clicked", \&action_project_gsch2pcb);
+$toolbar->insert($tbGsch2pcb, -1);
+$toolbarStructure->{gsch2pcb} = $tbGsch2pcb;
+
+my $spacer2 = Gtk2::SeparatorToolItem->new;
+$spacer2->set_draw(FALSE);
+$spacer2->set_expand(FALSE);
+$toolbar->insert($spacer2, -1);
+
+my $tbPdf = Gtk2::ToolButton->new_from_stock('export-pdf');
+$tbPdf->set_tooltip($tt, "Export Schematic PDF", "");
+$tbPdf->signal_connect("clicked", \&action_tools_export_pdf);
+$toolbar->insert($tbPdf, -1);
+$toolbarStructure->{pdf} = $tbPdf;
+
+my $tbGerber = Gtk2::ToolButton->new_from_stock('export-gerber');
+$tbGerber->set_tooltip($tt, "Export PCB Gerbers", "");
+$tbGerber->signal_connect("clicked", \&action_tools_export_gerber);
+$toolbar->insert($tbGerber, -1);
+$toolbarStructure->{gerber} = $tbGerber;
+
+my $tbBlender = Gtk2::ToolButton->new_from_stock('export-blender');
+$tbBlender->set_tooltip($tt, "Export PCB Blender Files", "");
+$tbBlender->signal_connect("clicked", \&action_tools_export_blender);
+$toolbar->insert($tbBlender, -1);
+$toolbarStructure->{blender} = $tbBlender;
+
+
+my $hb = Gtk2::HandleBox->new;
+$hb->add($toolbar);
+
+$vbox->pack_start($hb, FALSE, FALSE, 0);
+
+my $treeWindow = Gtk2::ScrolledWindow->new(undef, undef);
+$treeWindow->set_policy('automatic', 'automatic');
+$treeWindow->set_shadow_type('in');
+$treeWindow->set_border_width(5);
+
+$vbox->pack_start($treeWindow, TRUE, TRUE, 0);
+
+$vbox->show_all();
+
+$window->add($vbox);
+$window->set_title("gEDA GAF Project");
+$window->show_all();
+
+updateMenus();
+
+Gtk2->main();
+
+
+
+
+# File menu actions
+
+sub action_project_new {
+    my $fb = Gtk2::FileChooserDialog->new(
+        "New Project",
+        undef,
+        "select-folder",
+        "gtk-cancel" => "cancel",
+        "gtk-ok" => "ok"
+    );
+
+#    my $filter = Gtk2::FileFilter->new();
+#    $filter->set_name("Directories");
+#    $filter->add_pattern("*.gaf");
+#    $fb->add_filter($filter);
+
+    my $filename = "";
+
+    if ($fb->run eq "ok") {
+        $filename = $fb->get_filename;
+    }
+
+    $fb->destroy;
+
+    if ($filename eq "") {
+        return;
+    }
+    mkdir($filename);
+
+    my @bits = split(/\//, $filename);
+    my $name = pop(@bits);
+
+    my $tokens;
+    $tokens->{PROJECT} = $name;
+    $tokens->{FILENAME} = "$name.sch";
+    my @uid = getpwuid($<); 
+    my @gecos = split(/\,/, $uid[6]);
+    $tokens->{USERNAME} = $gecos[0];
+
+    copyFileWithReplacements(findFile("default.sch"), "$filename/$name.sch", $tokens);
+    copyFileWithReplacements(findFile("default.lht"), "$filename/$name.lht", $tokens);
+
+    $project = undef;
+    $project->{file} = "$filename/$name.gaf";
+    $project->{name} = $name;
+    push(@{$project->{schematics}}, "$name.sch");
+
+    writeProjectFile();
+
+    $window->set_title($project->{file});
+    updateProjectData();
+}
+
+sub action_project_open {
+    my $fb = Gtk2::FileChooserDialog->new(
+        "Open Project",
+        undef,
+        "open",
+        "gtk-cancel" => "cancel",
+        "gtk-ok" => "ok"
+    );
+
+    my $filter = Gtk2::FileFilter->new();
+    $filter->set_name("gEDA GAF Projects");
+    $filter->add_pattern("*.gaf");
+    $fb->add_filter($filter);
+
+    my $filename = "";
+
+    if ($fb->run eq "ok") {
+        $filename = $fb->get_filename;
+    }
+    $fb->destroy;
+
+    if ($filename eq "") {
+        return;
+    }
+
+    $project = undef;
+    $project->{file} = $filename;
+    $window->set_title($filename);
+    updateProjectData();
+}
+
+sub action_project_exit {
+
+    savePCB();
+    saveGSchem();
+
+    if ($project->{handles}->{pcb}) {
+        print {$project->{handles}->{pcb}} "Quit\n";
+    }
+    if ($project->{handles}->{gschem}) {
+        print {$project->{handles}->{gschem}} "quit\n";
+    }
+
+    usleep(10000);
+
+    Gtk2->main_quit;
+}
+
+sub action_project_gschem {
+
+    if ($project->{pids}->{gschem}) {
+        my $exists = kill 0, $project->{pids}->{gschem};
+        if ($exists) {
+            if (fork() == 0) {
+                my $id = getWindowIDByPID($project->{pids}->{gschem}, "gschem");
+                raiseWindowToFront($id);
+                exit(0);
+            }
+            return;
+        }
+    }
+
+    my @args = getSchematics();
+    unshift(@args, "--control-fd=stdin");
+    
+    my $pid = open(my $fh, "|-");
+
+    if (!$pid) {
+        exec "gschem", @args;
+    } else {
+        $project->{pids}->{gschem} = $pid;
+        $project->{handles}->{gschem} = $fh;
+    }
+}
+
+sub getSchematics() {
+    my @paths;
+    my @dirparts = split(/\//, $project->{file});
+    pop(@dirparts);
+    my $dir = join("/", @dirparts);
+    foreach my $schem (@{$project->{schematics}}) {
+        push(@paths, "$dir/$schem");
+    }
+    return @paths;
+}
+
+sub action_project_pcb {
+
+    if ($project->{pids}->{pcb}) {
+
+
+        my $exists = kill 0, $project->{pids}->{pcb};
+
+        if ($exists) {
+            if (fork() == 0) {
+                my $id = getWindowIDByPID($project->{pids}->{pcb}, "PCB");
+                raiseWindowToFront($id);
+                exit(0);
+            }
+            return;
+        }
+    }
+
+
+    my $dir = getProjectDir();
+    my $pcbfilename = sprintf("%s/%s.pcb", $dir, $project->{name});
+    my $lhtfilename = sprintf("%s/%s.lht", $dir, $project->{name});
+
+    my $filename;
+    if ( -f $lhtfilename ) {
+        $filename = $lhtfilename;
+    } else {
+        $filename = $pcbfilename;
+    }
+
+    my @args;
+    push(@args, "--listen");
+    push(@args, $filename);
+
+    my $pid = open(my $fh, "|-");
+
+    if (!$pid) {
+        exec "pcb-rnd", @args;
+    } else {
+        $project->{pids}->{pcb} = $pid;
+        $project->{handles}->{pcb} = $fh;
+    }
+}
+
+sub action_project_gsch2pcb {
+    writeProjectFile();
+    my $pid = fork();
+    if (!$pid) {
+        chdir(getProjectDir());
+
+        saveGSchem();
+#        savePCB();
+
+        usleep(100000);
+        my @args = getSchematics();
+        unshift(@args, "--pgskip");
+        vsystem("refdes_renum", @args);
+
+        if ($project->{handles}->{gschem}) {
+            my @paths = getSchematics();
+            foreach my $schem (@paths) {
+                $schem =~ s/ /\\ /g;
+                print {$project->{handles}->{gschem}} "revert $schem\n";
+            }
+        }
+        if ($project->{handles}->{pcb}) {
+            my @paths = getSchematics();
+
+            print {$project->{handles}->{pcb}} "Deselect(All)\n";
+
+            my $command = "Import(gnetlist,";
+            foreach my $path (@paths) {
+                if ($command ne "Import(gnetlist,") {
+                    $command += "$command,";
+                }
+                $command = "$command\"$path\"";
+            }
+            $command = "$command)\n";
+
+            print $command;
+
+            print {$project->{handles}->{pcb}} $command;
+
+            print {$project->{handles}->{pcb}} "Delete(Selected)\n";
+        }
+        exit(0);
+    }
+}
+
+sub action_tools_export_pdf() {
+    saveGSchem();
+
+    if (fork() == 0) {
+        my $dir = getProjectDir();
+        my $pdf = sprintf("%s/%s.pdf", $dir, $project->{name});
+        my @args = (
+            "export",
+            "-o",
+            $pdf
+        );
+        foreach my $schem (@{$project->{schematics}}) {
+            push(@args, "$dir/$schem");
+        }
+
+        vsystem("gaf", @args);
+
+        @args = ($pdf);
+        vsystem("evince", @args);
+        exit(0);
+    }
+}
+
+sub action_tools_export_gerber() {
+    savePCB();
+
+    if (fork() == 0) {
+        my $dir = getProjectDir();
+        my $gerberdir = "$dir/Gerber";
+        my $pcb = sprintf("%s/%s.pcb", $dir, $project->{name});
+        my $lht = sprintf("%s/%s.lht", $dir, $project->{name});
+
+        if (-f $lht) {
+            $pcb = $lht;
+        }
+
+        my $stub = sprintf("%s/%s", $gerberdir, $project->{name});
+
+        mkdir($gerberdir);
+
+        my @args = (
+            "-x",
+            "cam",
+            sprintf("gerber:%s", $settings->{export}->{gerber}->{format}),
+            "--outfile",
+            $stub,
+            $pcb
+        );
+
+#        my @args = (
+#            "-x",
+#            "gerber",
+#            "--coord-format",
+#            "micrometer",
+#            "--name-style",
+#            "hackvana",
+#            "--gerberfile",
+#            $stub,
+#            $pcb
+#        );
+        vsystem("pcb-rnd", @args);
+
+        @args = (
+            "-x",
+            "bom",
+            "--bomfile",
+            "$stub.bom",
+        );
+        vsystem("pcb-rnd", @args);
+        @args = (
+            "-x",
+            "XY",
+            "--xyfile",
+            "$stub.xy",
+            $pcb
+        );
+
+        @args = ();
+
+        my $n = $project->{name};
+
+        opendir(DIR, $gerberdir);
+        while (my $file = readdir(DIR)) {
+            if ($file =~ /\.bom$/) {
+                next;
+            }
+            if (substr($file, 0, length($n) + 1) eq "$n.") {
+                push(@args, "$gerberdir/$file");
+            }
+        }
+        vsystem("gerbv", @args);
+        exit(0);
+    }
+}
+
+sub action_tools_export_blender() {
+    savePCB();
+
+    my $pid = fork();
+    if ($pid == 0) {
+        my $dir = getProjectDir();
+        my $gerberdir = "$dir/Render";
+        my $pcb = sprintf("%s/%s.pcb", $dir, $project->{name});
+        my $lht = sprintf("%s/%s.lht", $dir, $project->{name});
+        if ( -f $lht ) {
+            $pcb = $lht;
+        }
+        my $stub = sprintf("%s/%s", $gerberdir, $project->{name});
+
+        mkdir($gerberdir);
+
+        my @args = (
+            "-x",
+            "cam",
+            "gerber:fixed_topbottom",
+            "--outfile",
+            $stub,
+            $pcb
+        );
+
+
+        my @args = (
+            "-x",
+            "gerber",
+            "--coord-format",
+            "micrometer",
+            "--name-style",
+            "fixed",
+            "--gerberfile",
+            $stub,
+            $pcb
+        );
+        vsystem("pcb-rnd", @args);
+
+        @args = (
+            "-x",
+            "bom",
+            "--bomfile",
+            "$stub.bom",
+        );
+        vsystem("pcb-rnd", @args);
+        @args = (
+            "-x",
+            "XY",
+            "--xyfile",
+            "$stub.xy",
+            $pcb
+        );
+        vsystem("pcb-rnd", @args);
+
+        chdir($gerberdir);
+        @args = (
+            "-n",
+            $project->{name}
+        );
+        vsystem("gentex", @args);
+        exit(0);
+    } else {
+        $project->{pids}->{render} = $pid;
+    }
+}
+
+sub action_tools_preferences() {
+    my $preferencesDialog = Gtk2::Window->new('toplevel');
+    my $border_hbox = Gtk2::HBox->new;
+    my $border_vbox = Gtk2::VBox->new;
+    my $outer_vbox = Gtk2::VBox->new;
+    $border_vbox->pack_start($outer_vbox, FALSE, FALSE, 5);
+    $border_hbox->pack_start($border_vbox, FALSE, FALSE, 5);
+    $preferencesDialog->add($border_hbox);
+    $preferencesDialog->set_transient_for($window);
+    $preferencesDialog->set_default_size(500, 400);
+    $preferencesDialog->set_position("center-on-parent");
+    $preferencesDialog->set_title("GAF-Project Preferences");
+    $preferencesDialog->set_resizable(FALSE);
+    $preferencesDialog->set_modal(TRUE);
+
+    $preferencesDialog->signal_connect('delete_event' => sub { });
+
+    my ($gerber_export_format, $gerber_export_format_combo) = createComboBox("Gerber export format:", $settings->{export}->{gerber}->{format}, (
+        "doc_png", "eagle", "fixed_topbottom", "fixed", "universal", "OSH_Park", "Seeed", "JLC_PCB", "protel", "PCBWay", "orcad"
+    ));
+    $outer_vbox->pack_start($gerber_export_format, FALSE, FALSE, 0);
+
+    my ($gerber_export_outline, $gerber_export_outline_checkbox) = createCheckBox("Create outline in all files", $settings->{export}->{gerber}->{outline});
+    $outer_vbox->pack_start($gerber_export_outline);
+
+    my $buttons = Gtk2::HButtonBox->new;
+    $buttons->set_layout_default("end");
+    my $cancel = Gtk2::Button->new_from_stock("gtk-cancel");
+    $buttons->pack_start($cancel, FALSE, FALSE, 0);
+    my $ok = Gtk2::Button->new_from_stock("gtk-ok");
+    $buttons->pack_start($ok, FALSE, FALSE, 0);
+
+    $ok->signal_connect("clicked" => sub { 
+        $settings->{export}->{gerber}->{format} = $gerber_export_format_combo->get_active_text();
+        if (gerber_export_outline_checkbox->get_active) {
+            $settings->{export}->{gerber}->{outline} = TRUE;
+        } else {
+            $settings->{export}->{gerber}->{outline} = FALSE;
+        }
+        saveSettings();
+        $preferencesDialog->destroy; 
+    });
+
+    $cancel->signal_connect("clicked" => sub { $preferencesDialog->destroy; });
+
+    $outer_vbox->pack_start($buttons, FALSE, FALSE, 0);
+        
+    $preferencesDialog->show_all();
+}
+
+sub createComboBox($$@) {
+    my $text = shift;
+    my $current = shift;
+    my @options = @_;
+
+    my $hbox = Gtk2::HBox->new;
+    my $label = Gtk2::Label->new;
+    $label->set_text($text);
+    $hbox->pack_start($label, FALSE, FALSE, 0);
+
+    my $model = Gtk2::ListStore->new ('Glib::String');
+    my $match = -1;
+    my $count = -1;
+    foreach my $option (@options) {
+        $count++;
+        if ($option eq $current) {
+            $match = $count;
+        }
+        $model->set($model->append, 0, $option);
+    }
+
+    my $combo = Gtk2::ComboBox->new($model);
+    my $renderer = Gtk2::CellRendererPixbuf->new;
+    $combo->pack_start($renderer, FALSE);
+    $combo->add_attribute($renderer, stock_id => 0);
+    $renderer = Gtk2::CellRendererText->new;
+    $combo->pack_start($renderer, TRUE);
+    $combo->add_attribute($renderer, text => 0);
+    $combo->set_active($match);
+
+    $hbox->pack_start($combo, TRUE, TRUE, 0);
+    return ($hbox, $combo);
+}
+
+sub createCheckBox($$) {
+    my $text = shift;
+    my $current = shift;
+
+    my $hbox = Gtk2::HBox->new;
+
+    my $cb = Gtk2::CheckButton->new_with_label($text);
+    $cb->set_active($current);
+    $hbox->pack_start($cb, TRUE, TRUE, 0);
+    return ($hbox, $cb);
+}
+
+sub vsystem($@) {
+    my $command = shift;
+    my @args = @_;
+
+#    print "$command\n";
+#    foreach my $a (@args) {
+#        print "    $a\n";
+#    }
+    system $command, @args;
+}
+
+
+sub signalProcesses($) {
+    my $signal = shift;
+
+    if ($project->{pids}->{gschem}) {
+        kill $signal, $project->{pids}->{gschem};
+    }
+}
+
+# Menu building functions
+
+sub projectmenu {
+    my $menu_project = Gtk2::Menu->new();
+    $menu_project->append(Gtk2::TearoffMenuItem->new);
+
+    $menu_project->append(addMenu("project", "gtk-new", \&action_project_new));
+    $menu_project->append(addMenu("project", "gtk-open", \&action_project_open));
+    $menu_project->append(addMenu("project", "gtk-close", \&action_project_close));
+    $menu_project->append(Gtk2::SeparatorMenuItem->new());
+    $menu_project->append(addMenu("project", "gschem", \&action_project_gschem));
+    $menu_project->append(addMenu("project", "pcb", \&action_project_pcb));
+#    $menu_project->append(addMenu("project", "gattrib", \&action_project_gattrib));
+    $menu_project->append(addMenu("project", "gsch2pcb", \&action_project_gsch2pcb));
+    $menu_project->append(Gtk2::SeparatorMenuItem->new());
+    $menu_project->append(addMenu("project", "gtk-quit", \&action_project_exit));
+
+    return $menu_project;
+}
+
+sub toolsmenu {
+    my $menu_tools = Gtk2::Menu->new();
+    $menu_tools->append(Gtk2::TearoffMenuItem->new);
+
+    $menu_tools->append(addMenu("tools", "export-pdf", \&action_tools_export_pdf));
+    $menu_tools->append(addMenu("tools", "export-gerber", \&action_tools_export_gerber));
+    $menu_tools->append(addMenu("tools", "export-blender", \&action_tools_export_blender));
+    
+    $menu_tools->append(Gtk2::SeparatorMenuItem->new());
+
+    $menu_tools->append(addMenu("tools", "gtk-preferences", \&action_tools_preferences));
+    
+    return $menu_tools;
+}
+
+
+
+
+# Helper functions
+
+sub addMenu($$$) {
+    my $menu = shift;
+    my $entryname = shift;
+    my $func = shift;
+
+    my $item = Gtk2::ImageMenuItem->new_from_stock($entryname, undef);
+    $item->signal_connect("activate" => $func);
+    $menuStructure->{$menu}->{$entryname} = $item;
+    return $item;
+}
+
+sub addStockIcon($$$$) {
+    my $name = shift;
+    my $label = shift;
+    my $sym = shift;
+    my $file = shift;
+
+    Gtk2::Stock->add({
+        stock_id            => $name,
+        label               => $label,
+        modifier            => [],
+        keyval              => $Gtl2::Gdk::Keysyms{$sym},
+        translation_domain  => 'gtk2_image'
+    });
+
+    my $iconSet = Gtk2::IconSet->new_from_pixbuf(
+        Gtk2::Gdk::Pixbuf->new_from_file($file));
+    my $icon_factory = Gtk2::IconFactory->new;
+    $icon_factory->add($name, $iconSet);
+    $icon_factory->add_default;
+}
+
+sub updateMenus() {
+    if ($project == undef) {
+        $menuStructure->{project}->{"gtk-close"}->set_sensitive(FALSE);
+        $menuStructure->{project}->{gschem}->set_sensitive(FALSE);
+        $menuStructure->{project}->{pcb}->set_sensitive(FALSE);
+        $menuStructure->{project}->{gsch2pcb}->set_sensitive(FALSE);
+        $menuStructure->{tools}->{"export-pdf"}->set_sensitive(FALSE);
+        $menuStructure->{tools}->{"export-gerber"}->set_sensitive(FALSE);
+        $menuStructure->{tools}->{"export-blender"}->set_sensitive(FALSE);
+        $toolbarStructure->{gschem}->set_sensitive(FALSE);
+        $toolbarStructure->{pcb}->set_sensitive(FALSE);
+        $toolbarStructure->{gsch2pcb}->set_sensitive(FALSE);
+        $toolbarStructure->{pdf}->set_sensitive(FALSE);
+        $toolbarStructure->{gerber}->set_sensitive(FALSE);
+        $toolbarStructure->{blender}->set_sensitive(FALSE);
+    } else {
+        $menuStructure->{project}->{"gtk-close"}->set_sensitive(TRUE);
+        $menuStructure->{project}->{gschem}->set_sensitive(TRUE);
+        $menuStructure->{project}->{pcb}->set_sensitive(TRUE);
+        $menuStructure->{project}->{gsch2pcb}->set_sensitive(TRUE);
+        $menuStructure->{tools}->{"export-pdf"}->set_sensitive(TRUE);
+        $menuStructure->{tools}->{"export-gerber"}->set_sensitive(TRUE);
+        $menuStructure->{tools}->{"export-blender"}->set_sensitive(TRUE);
+        $toolbarStructure->{gschem}->set_sensitive(TRUE);
+        $toolbarStructure->{pcb}->set_sensitive(TRUE);
+        $toolbarStructure->{gsch2pcb}->set_sensitive(TRUE);
+        $toolbarStructure->{pdf}->set_sensitive(TRUE);
+        $toolbarStructure->{gerber}->set_sensitive(TRUE);
+        $toolbarStructure->{blender}->set_sensitive(TRUE);
+    }
+}
+
+sub updateProjectData() {
+    updateMenus();
+
+    if ($project == undef) {
+        return;
+    }
+
+    my $filename = $project->{file};
+
+    $project = undef;
+    $project->{file} = $filename;
+
+    if (!open(IN, $filename)) { 
+        error(sprintf("Unable to open project file %s", $project->{file}));
+        return;
+    }
+
+    while (my $l = <IN>) {
+        chomp($l);
+        if ($l =~ /^schematics\s+(.*)$/) {
+            my $s = $1;
+            my @bits = split(/\s+/, $s);
+            foreach my $bit (@bits) {
+                push(@{$project->{schematics}}, $bit);
+            }
+            next;
+        }
+
+        if ($l =~ /^output-name\s+(.*)$/) {
+            $project->{name} = $1;
+            next;
+        }
+    }
+
+    close(IN);
+}
+
+sub writeProjectFile() {
+    open(OUT, ">",  $project->{file}) || error(sprintf("Unable to open %s for writing", $project->{file}));
+    print OUT "schematics";
+    foreach my $schemfile (@{$project->{schematics}}) {
+        print OUT " $schemfile";
+    }
+    print OUT "\n";
+    print OUT "output-name ";
+    print OUT $project->{name};
+    print OUT "\n";
+
+    foreach my $elemdir (@{$settings->{elements}}) {
+        print OUT "elements-dir $elemdir\n";
+    }
+    close(OUT);
+} 
+
+
+# This wants to do something nicer
+sub error($) {
+    my $err = shift;
+    print "Error: $err\n";
+}
+
+sub handleSigChld() {
+    while ((my $child = waitpid(-1, WNOHANG)) > 0) {
+        my $status = $?;
+        if ($status == 6 || $status == 0) {
+            if ($project->{pids}->{gschem} == $child) {
+                $project->{pids}->{gschem} = undef;
+            }
+            if ($project->{pids}->{pcb} == $child) {
+                $project->{pids}->{pcb} = undef;
+                $project->{handles}->{pcb} = undef;
+            }
+            if ($project->{pids}->{render} == $child) {
+                $project->{pids}->{render} = undef;
+            }
+        }
+    }
+}
+
+sub getProjectDir() {
+    my @dirparts = split(/\//, $project->{file});
+    pop(@dirparts);
+    my $dir = join("/", @dirparts);
+    return $dir;
+}
+
+sub savePCB() {
+    if ($project->{handles}->{pcb}) {
+        print {$project->{handles}->{pcb}} "Save(Layout)\n";
+    }
+}
+
+sub saveGSchem() {
+    if ($project->{handles}->{gschem}) {
+        my @paths = getSchematics();
+        foreach my $schem (@paths) {
+            $schem =~ s/ /\\ /g;
+            print {$project->{handles}->{gschem}} "save $schem\n";
+        }
+    }
+}
+
+sub getWindowIDByPID($$) {
+    my $pid = shift;
+    my $name = shift;
+
+    my @ids = `xdotool search --all --pid=$pid --name "\\- $name"`;
+    return pop(@ids);
+}
+
+sub raiseWindowToFront($) {
+    my $id = shift;
+    my @args = (
+        "windowactivate", 
+        $id
+    );
+    vsystem("xdotool", @args);
+}
+
+sub findFile($) {
+    my $file = shift;
+    my @locations = (
+        "$HOME/.local/share/gaf-project",
+        "/usr/local/share/gaf-project",
+        "/usr/share/gaf-project"
+    );
+
+    foreach my $loc (@locations) {
+        if (-f "$loc/$file") {
+            return "$loc/$file";
+        }
+    }
+    return undef;
+}
+
+sub saveSettings() {
+    my $path = "$HOME/.config/gaf-project/gaf-project.conf";
+    if ( ! -d "$HOME/.config") {
+        mkdir("$HOME/.config");
+    }
+    if ( ! -d "$HOME/.config/gaf-project") {
+        mkdir("$HOME/.config/gaf-project");
+    }
+
+    store(\%{$settings}, "$HOME/.config/gaf-project/gaf-project.conf");
+}
+
+sub loadSettings() {
+    if (! -f "$HOME/.config/gaf-project/gaf-project.conf") {
+        saveSettings();
+    }
+    %{$settings} = %{retrieve("$HOME/.config/gaf-project/gaf-project.conf")};
+}
+
+sub copyFileWithReplacements($$$) {
+    my $from = shift;
+    my $to = shift;
+    my $replacements = shift;
+
+    open(IN, "<$from");
+    open(OUT, ">$to");
+
+    while (my $line = <IN>) {
+        foreach my $key (keys %{$replacements}) {
+            my $value = $replacements->{$key};
+
+            $line =~ s/\%$key\%/$value/g;
+        }
+
+        print OUT $line;
+    }
+    close(IN);
+    close(OUT);
+}
