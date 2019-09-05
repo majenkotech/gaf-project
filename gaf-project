@@ -550,6 +550,9 @@ sub action_tools_export_blender() {
     $tokens->{BOARDBOTTOM} = $bbox->{outline}->{y}->{max};
     $tokens->{BOARDLEFT} = $bbox->{outline}->{x}->{min};
     $tokens->{BOARDRIGHT} = $bbox->{outline}->{x}->{max};
+    $tokens->{MASK} = $project->{export}->{blender}->{mask};
+    $tokens->{SILK} = $project->{export}->{blender}->{silk};
+    $tokens->{FINISH} = $project->{export}->{blender}->{finish};
     
     my $dlist == "";
 
