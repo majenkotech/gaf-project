@@ -8,6 +8,7 @@ use Data::Dumper;
 use POSIX ":sys_wait_h";
 use File::Copy;
 use Storable;
+use IPC::Open2;
 
 Gtk2->init;
 
@@ -18,6 +19,7 @@ addStockIcon("gschem", "Open _Schematic", "S", "/usr/share/icons/hicolor/scalabl
 addStockIcon("pcb", "Open _PCB", "P", "/usr/share/icons/hicolor/scalable/apps/pcb.svg");
 addStockIcon("gattrib", "Open _Attribute Editor", "A", "/usr/share/icons/hicolor/scalable/apps/geda-gattrib.svg");
 addStockIcon("gsch2pcb", "_Update PCB From Schematic", "U", "/usr/share/icons/hicolor/scalable/mimetypes/application-x-geda-gsch2pcb-project.svg");
+addStockIcon("project-properties", "Project _Properties", "P", "/usr/share/icons/hicolor/scalable/apps/software-properties.svg");
 addStockIcon("export-pdf", "Export Schematic _PDF", "P", "/usr/share/icons/breeze/mimetypes/32/application-pdf.svg");
 addStockIcon("export-gerber", "Export PCB _Gerbers", "G", "/usr/share/icons/hicolor/scalable/mimetypes/application-x-gerber.svg");
 addStockIcon("export-blender", "Export PCB _Blender Files", "B", "/usr/share/icons/hicolor/scalable/apps/blender.svg");
@@ -192,6 +194,10 @@ sub action_project_new {
     $project->{name} = $name;
     push(@{$project->{schematics}}, "$name.sch");
 
+    $project->{export}->{blender}->{mask} = "green";
+    $project->{export}->{blender}->{silk} = "white";
+    $project->{export}->{blender}->{finish} = "hasl";
+
     writeProjectFile();
 
     $window->set_title($project->{file});
@@ -223,10 +229,13 @@ sub action_project_open {
         return;
     }
 
-    $project = undef;
+    $project = loadHashTree($filename);
+    print "This is what I loaded:\n";
+    print Dumper($project);
     $project->{file} = $filename;
     $window->set_title($filename);
     updateProjectData();
+
 }
 
 sub action_project_exit {
@@ -372,6 +381,62 @@ sub action_project_gsch2pcb {
     }
 }
 
+sub action_project_properties() {
+    my $preferencesDialog = Gtk2::Window->new('toplevel');
+    my $border_hbox = Gtk2::HBox->new;
+    my $border_vbox = Gtk2::VBox->new;
+    my $outer_vbox = Gtk2::VBox->new;
+    $border_vbox->pack_start($outer_vbox, FALSE, FALSE, 5);
+    $border_hbox->pack_start($border_vbox, FALSE, FALSE, 5);
+    $preferencesDialog->add($border_hbox);
+    $preferencesDialog->set_transient_for($window);
+    $preferencesDialog->set_default_size(500, 400);
+    $preferencesDialog->set_position("center-on-parent");
+    $preferencesDialog->set_title("Project Properties");
+    $preferencesDialog->set_resizable(FALSE);
+    $preferencesDialog->set_modal(TRUE);
+
+    $preferencesDialog->signal_connect('delete_event' => sub { });
+
+    my ($render_mask, $render_mask_combo) = createComboBox("Blender Mask Colour:", $project->{export}->{blender}->{mask}, (
+        "red", "green", "blue", "purple", "yellow", "black", "white"
+    ));
+    $outer_vbox->pack_start($render_mask, FALSE, FALSE, 0);
+
+    my ($render_silk, $render_silk_combo) = createComboBox("Blender Silk Colour:", $project->{export}->{blender}->{silk}, (
+        "black", "white"
+    ));
+    $outer_vbox->pack_start($render_silk, FALSE, FALSE, 0);
+
+    my ($render_finish, $render_finish_combo) = createComboBox("Blender Finish:", $project->{export}->{blender}->{finish}, (
+        "hasl", "enig"
+    ));
+    $outer_vbox->pack_start($render_finish, FALSE, FALSE, 0);
+
+
+    my $buttons = Gtk2::HButtonBox->new;
+    $buttons->set_layout_default("end");
+    my $cancel = Gtk2::Button->new_from_stock("gtk-cancel");
+    $buttons->pack_start($cancel, FALSE, FALSE, 0);
+    my $ok = Gtk2::Button->new_from_stock("gtk-ok");
+    $buttons->pack_start($ok, FALSE, FALSE, 0);
+
+    $ok->signal_connect("clicked" => sub {
+        $project->{export}->{blender}->{mask} = $render_mask_combo->get_active_text();
+        $project->{export}->{blender}->{silk} = $render_silk_combo->get_active_text();
+        $project->{export}->{blender}->{finish} = $render_finish_combo->get_active_text();
+        writeProjectFile();
+        $preferencesDialog->destroy;
+    });
+
+    $cancel->signal_connect("clicked" => sub { $preferencesDialog->destroy; });
+
+    $outer_vbox->pack_start($buttons, FALSE, FALSE, 0);
+
+    $preferencesDialog->show_all();
+}
+
+
 sub action_tools_export_pdf() {
     saveGSchem();
 
@@ -470,10 +535,36 @@ sub action_tools_export_gerber() {
 sub action_tools_export_blender() {
     savePCB();
 
+    my $bbox = getBoardBoundingBox();
+    my $dnp = getDoNotPopulateList();
+
+    my $dir = getProjectDir();
+    my $gerberdir = "$dir/Render";
+
+    my $tokens;
+    $tokens->{RENDERDIR} = $gerberdir;
+    $tokens->{NAME} = $project->{name};
+    $tokens->{PAGEHEIGHT} = $bbox->{board}->{height};
+    $tokens->{PAGEWIDTH} = $bbox->{board}->{width};
+    $tokens->{BOARDTOP} = $bbox->{outline}->{y}->{min};
+    $tokens->{BOARDBOTTOM} = $bbox->{outline}->{y}->{max};
+    $tokens->{BOARDLEFT} = $bbox->{outline}->{x}->{min};
+    $tokens->{BOARDRIGHT} = $bbox->{outline}->{x}->{max};
+    
+    my $dlist == "";
+
+    foreach my $d (@{$dnp}) {
+        if ($dlist ne "") {
+            $dlist = "$dlist,\n";
+        }
+        $dlist = "$dlist        \"$d\": 1";
+    }
+    $tokens->{DNPLIST} = $dlist;
+
+    copyFileWithReplacements(findFile("pcbblend.py"), "$dir/pcbblend.py", $tokens);
+
     my $pid = fork();
     if ($pid == 0) {
-        my $dir = getProjectDir();
-        my $gerberdir = "$dir/Render";
         my $pcb = sprintf("%s/%s.pcb", $dir, $project->{name});
         my $lht = sprintf("%s/%s.lht", $dir, $project->{name});
         if ( -f $lht ) {
@@ -660,6 +751,8 @@ sub projectmenu {
     $menu_project->append(addMenu("project", "gtk-open", \&action_project_open));
     $menu_project->append(addMenu("project", "gtk-close", \&action_project_close));
     $menu_project->append(Gtk2::SeparatorMenuItem->new());
+    $menu_project->append(addMenu("project", "project-properties", \&action_project_properties));
+    $menu_project->append(Gtk2::SeparatorMenuItem->new());
     $menu_project->append(addMenu("project", "gschem", \&action_project_gschem));
     $menu_project->append(addMenu("project", "pcb", \&action_project_pcb));
 #    $menu_project->append(addMenu("project", "gattrib", \&action_project_gattrib));
@@ -725,6 +818,7 @@ sub addStockIcon($$$$) {
 sub updateMenus() {
     if ($project == undef) {
         $menuStructure->{project}->{"gtk-close"}->set_sensitive(FALSE);
+        $menuStructure->{project}->{"project-properties"}->set_sensitive(FALSE);
         $menuStructure->{project}->{gschem}->set_sensitive(FALSE);
         $menuStructure->{project}->{pcb}->set_sensitive(FALSE);
         $menuStructure->{project}->{gsch2pcb}->set_sensitive(FALSE);
@@ -739,6 +833,7 @@ sub updateMenus() {
         $toolbarStructure->{blender}->set_sensitive(FALSE);
     } else {
         $menuStructure->{project}->{"gtk-close"}->set_sensitive(TRUE);
+        $menuStructure->{project}->{"project-properties"}->set_sensitive(TRUE);
         $menuStructure->{project}->{gschem}->set_sensitive(TRUE);
         $menuStructure->{project}->{pcb}->set_sensitive(TRUE);
         $menuStructure->{project}->{gsch2pcb}->set_sensitive(TRUE);
@@ -755,57 +850,19 @@ sub updateMenus() {
 }
 
 sub updateProjectData() {
-    updateMenus();
 
     if ($project == undef) {
         return;
     }
+    $project = loadHashTree($project->{file});
 
-    my $filename = $project->{file};
-
-    $project = undef;
-    $project->{file} = $filename;
-
-    if (!open(IN, $filename)) { 
-        error(sprintf("Unable to open project file %s", $project->{file}));
-        return;
-    }
-
-    while (my $l = <IN>) {
-        chomp($l);
-        if ($l =~ /^schematics\s+(.*)$/) {
-            my $s = $1;
-            my @bits = split(/\s+/, $s);
-            foreach my $bit (@bits) {
-                push(@{$project->{schematics}}, $bit);
-            }
-            next;
-        }
-
-        if ($l =~ /^output-name\s+(.*)$/) {
-            $project->{name} = $1;
-            next;
-        }
-    }
-
-    close(IN);
+    updateMenus();
 }
 
 sub writeProjectFile() {
-    open(OUT, ">",  $project->{file}) || error(sprintf("Unable to open %s for writing", $project->{file}));
-    print OUT "schematics";
-    foreach my $schemfile (@{$project->{schematics}}) {
-        print OUT " $schemfile";
-    }
-    print OUT "\n";
-    print OUT "output-name ";
-    print OUT $project->{name};
-    print OUT "\n";
-
-    foreach my $elemdir (@{$settings->{elements}}) {
-        print OUT "elements-dir $elemdir\n";
-    }
-    close(OUT);
+    print "This is what I want to save:\n";
+    print Dumper($project);
+    saveHashTree($project, $project->{file});
 } 
 
 
@@ -928,3 +985,248 @@ sub copyFileWithReplacements($$$) {
     close(IN);
     close(OUT);
 }
+
+sub getBoardBoundingBox() {
+
+    my $dir = getProjectDir();
+    my $pcbfilename = sprintf("%s/%s.pcb", $dir, $project->{name});
+    my $lhtfilename = sprintf("%s/%s.lht", $dir, $project->{name});
+
+    my $filename;
+    if ( -f $lhtfilename ) {
+        $filename = $lhtfilename;
+    } else {
+        $filename = $pcbfilename;
+    }
+
+    my $pid = open2(\*CHILD_OUT, \*CHILD_IN, "pcb-rnd", "--gui", "batch", $filename);
+
+    print CHILD_IN qq{
+query(unselect, '@')
+query(select, '@.layer.type == BOUNDARY')
+propset(p/trace/thickness, 1um)
+propset(p/trace/clearance, 1um)
+query(eval, '@.layer.type == BOUNDARY thus @.bbox_naked.x1')
+query(eval, '@.layer.type == BOUNDARY thus @.bbox_naked.x2')
+query(eval, '@.layer.type == BOUNDARY thus @.bbox_naked.y1')
+query(eval, '@.layer.type == BOUNDARY thus @.bbox_naked.y2')
+propprint(board)
+q!
+};
+
+    my $bbox;
+    my $param;
+    while (my $out = <CHILD_OUT>) {
+        chomp($out);
+        print "$out\n";
+        if ($out =~ /Script eval:.*bbox_naked\.([xy])/) {
+            $param = $1;
+            $bbox->{outline}->{$param}->{min} = 9999999999;
+            $bbox->{outline}->{$param}->{max} = 0;
+            next;
+        }
+
+        if ($out =~ /p\/board\/(.*)/) {
+            $param = $1;
+            next;
+        }
+
+        if ($out =~ /true \((\d+)\)/) {
+            my $val = $1;
+            if ($val < $bbox->{outline}->{$param}->{min}) {
+                $bbox->{outline}->{$param}->{min} = $val;
+            }
+            if ($val > $bbox->{outline}->{$param}->{max}) {
+                $bbox->{outline}->{$param}->{max} = $val;
+            }
+            next;
+        }
+
+        if ($out =~ /common='(.*)mm'/) {
+            $bbox->{board}->{$param} = $1;
+            next;
+        }
+    }
+    close(CHILD_IN);
+    close(CHILD_OUT);
+
+    $bbox->{outline}->{x}->{min} = sprintf("%.2f", $bbox->{outline}->{x}->{min} / 1000000);
+    $bbox->{outline}->{x}->{max} = sprintf("%.2f", $bbox->{outline}->{x}->{max} / 1000000);
+    $bbox->{outline}->{y}->{min} = sprintf("%.2f", $bbox->{outline}->{y}->{min} / 1000000);
+    $bbox->{outline}->{y}->{max} = sprintf("%.2f", $bbox->{outline}->{y}->{max} / 1000000);
+
+    return $bbox;
+}
+
+sub getDoNotPopulateList() {
+
+    my $dir = getProjectDir();
+    my $pcbfilename = sprintf("%s/%s.pcb", $dir, $project->{name});
+    my $lhtfilename = sprintf("%s/%s.lht", $dir, $project->{name});
+
+    my $filename;
+    if ( -f $lhtfilename ) {
+        $filename = $lhtfilename;
+    } else {
+        $filename = $pcbfilename;
+    }
+
+    my $pid = open2(\*CHILD_OUT, \*CHILD_IN, "pcb-rnd", "--gui", "batch", $filename);
+
+    print CHILD_IN qq{
+query(eval, '@.a.dnp == "true" thus @.refdes')
+q!
+};
+
+    my $refdes;
+    while (my $out = <CHILD_OUT>) {
+        chomp($out);
+        if ($out =~ /^ "(.*)"$/) {
+            push(@{$refdes}, $1);
+        }
+    }
+    close(CHILD_IN);
+    close(CHILD_OUT);
+
+    return $refdes;
+}
+
+sub saveHashTree($$) {
+    my $hashtree = shift;
+    my $file = shift;
+
+    my $data = flattenTree($hashtree, undef);
+
+    print "This is after flattening:\n";
+    print Dumper($data);
+
+    open(OUT, ">$file");
+    foreach my $key (sort keys %{$data}) {
+        print OUT "$key = ";
+        if (ref $data->{$key} eq ref []) {
+            print OUT "[";
+            my $first = 1;
+            foreach my $bit (@{$data->{$key}}) {
+                if ($first == 0) {
+                    print OUT ",";
+                } else {
+                    $first = 0;
+                }
+                print OUT "$bit";
+            }
+            print OUT "]";
+        } else {
+            print OUT $data->{$key};
+        }
+
+        print OUT "\n";
+    }
+    close(OUT);
+}
+
+sub loadHashTree($) {
+    my $file = shift;
+    my $tree;
+
+    open(IN, "<$file") || error("Can't open $file for reading");
+    while (my $line = <IN>) {
+        chomp($line);
+        if ($line =~ /^([^=\s]+)\s*=\s*(.*)\s*$/) {
+            $tree->{$1} = $2;
+        }
+    }
+    close(IN);
+
+    return expandTree($tree);
+}
+
+sub expandTree($) {
+    my $tree = shift;
+
+    my $out;
+    foreach my $key (keys %{$tree}) {
+        my @b = split(/\./, $key);
+        my $bs = @b;
+
+        my $val = $tree->{$key};
+
+        if ($val =~ /^\[(.*)\]$/) {
+            my $s = $1;
+            my @spl = split(/,/, $s);
+            $val = \@spl;
+        }
+        print "[$key] = [$val]\n";
+
+        # There has to be a better way of doing this...
+
+        if ($bs == 1) {
+            $out->{$b[0]} = $val;
+            next;
+        }
+
+        if ($bs == 2) {
+            $out->{$b[0]}->{$b[1]} = $val;
+            next;
+        }
+
+        if ($bs == 3) {
+            $out->{$b[0]}->{$b[1]}->{$b[2]} = $val;
+            next;
+        }
+
+        if ($bs == 4) {
+            $out->{$b[0]}->{$b[1]}->{$b[2]}->{$b[3]} = $val;
+            next;
+        }
+
+        if ($bs == 5) {
+            $out->{$b[0]}->{$b[1]}->{$b[2]}->{$b[3]}->{$b[4]} = $val;
+            next;
+        }
+
+        if ($bs == 6) {
+            $out->{$b[0]}->{$b[1]}->{$b[2]}->{$b[3]}->{$b[4]}->{$b[5]} = $val;
+            next;
+        }
+
+        if ($bs == 7) {
+            $out->{$b[0]}->{$b[1]}->{$b[2]}->{$b[3]}->{$b[4]}->{$b[5]}->{$b[6]} = $val;
+            next;
+        }
+
+        if ($bs == 8) {
+            $out->{$b[0]}->{$b[1]}->{$b[2]}->{$b[3]}->{$b[4]}->{$b[5]}->{$b[6]}->{$b[7]} = $val;
+            next;
+        }
+    }
+    return $out;
+}
+
+sub flattenTree($$) {
+    my $subtree = shift;
+    my $prefix = shift;
+
+    my $out = undef;
+
+    foreach my $key (keys %{$subtree}) {
+        my $fullkey = $key;
+        if ($prefix) {
+            $fullkey = "$prefix.$key";
+        } 
+            
+        if (ref $subtree->{$key} eq ref {}) {
+            my $more = flattenTree($subtree->{$key}, $fullkey);
+            if ($more) {
+                foreach my $skey (keys %{$more}) {
+                    $out->{$skey} = $more->{$skey};
+                }
+            }
+        } else {
+            $out->{$fullkey} = $subtree->{$key};
+        }
+    }
+
+    return $out;
+}
+
+
