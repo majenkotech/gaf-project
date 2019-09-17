@@ -30,6 +30,7 @@ my $HOME=$ENV{HOME};
 
 my $project = undef;
 my $settings = undef;
+my $runtime = undef;
 my $preferencesDialog = undef;
 
 $settings->{elements}[0] = "/home/matt/Dropbox/gEDA/Components";
@@ -190,7 +191,7 @@ sub action_project_new {
     copyFileWithReplacements(findFile("default.lht"), "$filename/$name.lht", $tokens);
 
     $project = undef;
-    $project->{file} = "$filename/$name.gaf";
+    $runtime->{file} = "$filename/$name.gaf";
     $project->{name} = $name;
     push(@{$project->{schematics}}, "$name.sch");
 
@@ -200,7 +201,7 @@ sub action_project_new {
 
     writeProjectFile();
 
-    $window->set_title($project->{file});
+    $window->set_title($runtime->{file});
     updateProjectData();
 }
 
@@ -229,13 +230,47 @@ sub action_project_open {
         return;
     }
 
+    for (my $i = 0; $i < 10; $i++) {
+        if ($settings->{mru}->[$i] eq $filename) {
+            $settings->{mru}->[$i] = undef;
+        }
+    }
+
+    unshift(@{$settings->{mru}}, $filename);
+    $settings->{mru}->[10] = undef;
+
+    saveSettings();
+
     $project = loadHashTree($filename);
-    print "This is what I loaded:\n";
-    print Dumper($project);
-    $project->{file} = $filename;
+    $runtime->{file} = $filename;
     $window->set_title($filename);
     updateProjectData();
 
+}
+
+sub action_mru_open {
+    my $self = shift;
+    my $filename = $self->{file};
+
+    if ($filename eq "") {
+        return;
+    }
+
+    for (my $i = 0; $i < 10; $i++) {
+        if ($settings->{mru}->[$i] eq $filename) {
+            $settings->{mru}->[$i] = undef;
+        }
+    }
+
+    unshift(@{$settings->{mru}}, $filename);
+    $settings->{mru}->[10] = undef;
+
+    saveSettings();
+
+    $project = loadHashTree($filename);
+    $runtime->{file} = $filename;
+    $window->set_title($filename);
+    updateProjectData();
 }
 
 sub action_project_exit {
@@ -243,11 +278,11 @@ sub action_project_exit {
     savePCB();
     saveGSchem();
 
-    if ($project->{handles}->{pcb}) {
-        print {$project->{handles}->{pcb}} "Quit\n";
+    if ($runtime->{handles}->{pcb}) {
+        print {$runtime->{handles}->{pcb}} "Quit\n";
     }
-    if ($project->{handles}->{gschem}) {
-        print {$project->{handles}->{gschem}} "quit\n";
+    if ($runtime->{handles}->{gschem}) {
+        print {$runtime->{handles}->{gschem}} "quit\n";
     }
 
     usleep(10000);
@@ -257,11 +292,11 @@ sub action_project_exit {
 
 sub action_project_gschem {
 
-    if ($project->{pids}->{gschem}) {
-        my $exists = kill 0, $project->{pids}->{gschem};
+    if ($runtime->{pids}->{gschem}) {
+        my $exists = kill 0, $runtime->{pids}->{gschem};
         if ($exists) {
             if (fork() == 0) {
-                my $id = getWindowIDByPID($project->{pids}->{gschem}, "gschem");
+                my $id = getWindowIDByPID($runtime->{pids}->{gschem}, "gschem");
                 raiseWindowToFront($id);
                 exit(0);
             }
@@ -277,14 +312,14 @@ sub action_project_gschem {
     if (!$pid) {
         exec "gschem", @args;
     } else {
-        $project->{pids}->{gschem} = $pid;
-        $project->{handles}->{gschem} = $fh;
+        $runtime->{pids}->{gschem} = $pid;
+        $runtime->{handles}->{gschem} = $fh;
     }
 }
 
 sub getSchematics() {
     my @paths;
-    my @dirparts = split(/\//, $project->{file});
+    my @dirparts = split(/\//, $runtime->{file});
     pop(@dirparts);
     my $dir = join("/", @dirparts);
     foreach my $schem (@{$project->{schematics}}) {
@@ -295,14 +330,14 @@ sub getSchematics() {
 
 sub action_project_pcb {
 
-    if ($project->{pids}->{pcb}) {
+    if ($runtime->{pids}->{pcb}) {
 
 
-        my $exists = kill 0, $project->{pids}->{pcb};
+        my $exists = kill 0, $runtime->{pids}->{pcb};
 
         if ($exists) {
             if (fork() == 0) {
-                my $id = getWindowIDByPID($project->{pids}->{pcb}, "PCB");
+                my $id = getWindowIDByPID($runtime->{pids}->{pcb}, "PCB");
                 raiseWindowToFront($id);
                 exit(0);
             }
@@ -331,8 +366,8 @@ sub action_project_pcb {
     if (!$pid) {
         exec "pcb-rnd", @args;
     } else {
-        $project->{pids}->{pcb} = $pid;
-        $project->{handles}->{pcb} = $fh;
+        $runtime->{pids}->{pcb} = $pid;
+        $runtime->{handles}->{pcb} = $fh;
     }
 }
 
@@ -350,17 +385,17 @@ sub action_project_gsch2pcb {
         unshift(@args, "--pgskip");
         vsystem("refdes_renum", @args);
 
-        if ($project->{handles}->{gschem}) {
+        if ($runtime->{handles}->{gschem}) {
             my @paths = getSchematics();
             foreach my $schem (@paths) {
                 $schem =~ s/ /\\ /g;
-                print {$project->{handles}->{gschem}} "revert $schem\n";
+                print {$runtime->{handles}->{gschem}} "revert $schem\n";
             }
         }
-        if ($project->{handles}->{pcb}) {
+        if ($runtime->{handles}->{pcb}) {
             my @paths = getSchematics();
 
-            print {$project->{handles}->{pcb}} "Deselect(All)\n";
+            print {$runtime->{handles}->{pcb}} "Deselect(All)\n";
 
             my $command = "Import(gnetlist,";
             foreach my $path (@paths) {
@@ -371,11 +406,9 @@ sub action_project_gsch2pcb {
             }
             $command = "$command)\n";
 
-            print $command;
+            print {$runtime->{handles}->{pcb}} $command;
 
-            print {$project->{handles}->{pcb}} $command;
-
-            print {$project->{handles}->{pcb}} "Delete(Selected)\n";
+            print {$runtime->{handles}->{pcb}} "Delete(Selected)\n";
         }
         exit(0);
     }
@@ -624,7 +657,7 @@ sub action_tools_export_blender() {
         vsystem("gentex", @args);
         exit(0);
     } else {
-        $project->{pids}->{render} = $pid;
+        $runtime->{pids}->{render} = $pid;
     }
 }
 
@@ -646,12 +679,12 @@ sub action_tools_preferences() {
     $preferencesDialog->signal_connect('delete_event' => sub { });
 
     my ($gerber_export_format, $gerber_export_format_combo) = createComboBox("Gerber export format:", $settings->{export}->{gerber}->{format}, (
-        "doc_png", "eagle", "fixed_topbottom", "fixed", "universal", "OSH_Park", "Seeed", "JLC_PCB", "protel", "PCBWay", "orcad"
+        "doc_png", "eagle", "fixed_topbottom", "fixed", "universal", "OSH_Park", "Seeed", "JLC_PCB", "Elecrow", "protel", "PCBWay", "orcad"
     ));
     $outer_vbox->pack_start($gerber_export_format, FALSE, FALSE, 0);
 
     my ($gerber_export_outline, $gerber_export_outline_checkbox) = createCheckBox("Create outline in all files", $settings->{export}->{gerber}->{outline});
-    $outer_vbox->pack_start($gerber_export_outline);
+    $outer_vbox->pack_start($gerber_export_outline, FALSE, FALSE, 0);
 
     my $buttons = Gtk2::HButtonBox->new;
     $buttons->set_layout_default("end");
@@ -662,7 +695,7 @@ sub action_tools_preferences() {
 
     $ok->signal_connect("clicked" => sub { 
         $settings->{export}->{gerber}->{format} = $gerber_export_format_combo->get_active_text();
-        if (gerber_export_outline_checkbox->get_active) {
+        if ($gerber_export_outline_checkbox->get_active) {
             $settings->{export}->{gerber}->{outline} = TRUE;
         } else {
             $settings->{export}->{gerber}->{outline} = FALSE;
@@ -739,8 +772,8 @@ sub vsystem($@) {
 sub signalProcesses($) {
     my $signal = shift;
 
-    if ($project->{pids}->{gschem}) {
-        kill $signal, $project->{pids}->{gschem};
+    if ($runtime->{pids}->{gschem}) {
+        kill $signal, $runtime->{pids}->{gschem};
     }
 }
 
@@ -752,6 +785,7 @@ sub projectmenu {
 
     $menu_project->append(addMenu("project", "gtk-new", \&action_project_new));
     $menu_project->append(addMenu("project", "gtk-open", \&action_project_open));
+    $menu_project->append(addSubMenu("Recent", \&project_menu_mru));
     $menu_project->append(addMenu("project", "gtk-close", \&action_project_close));
     $menu_project->append(Gtk2::SeparatorMenuItem->new());
     $menu_project->append(addMenu("project", "project-properties", \&action_project_properties));
@@ -781,8 +815,22 @@ sub toolsmenu {
     return $menu_tools;
 }
 
-
-
+sub project_menu_mru($) { 
+    my $menu = shift;
+    $menu->foreach(sub {
+        my $w = shift;
+        $menu->remove($w);
+    });
+    for (my $i = 0; $i < 10; $i++) {
+        if ($settings->{mru}->[$i] eq "") {
+            next;
+        }
+        my $item = Gtk2::MenuItem->new($settings->{mru}->[$i]);
+        $item->{file} = $settings->{mru}->[$i];
+        $item->signal_connect("activate" => \&action_mru_open);
+        $menu->append($item);
+    }
+}
 
 # Helper functions
 
@@ -794,6 +842,27 @@ sub addMenu($$$) {
     my $item = Gtk2::ImageMenuItem->new_from_stock($entryname, undef);
     $item->signal_connect("activate" => $func);
     $menuStructure->{$menu}->{$entryname} = $item;
+    return $item;
+}
+
+sub addSubMenu($$) {
+    my $name = shift;
+    my $function = shift;
+    my $item = Gtk2::MenuItem->new($name);
+    my $menu = Gtk2::Menu->new();
+
+    $item->{function} = $function;
+    $item->{menu} = $menu;
+
+    $item->{function}->($item->{menu});
+    $item->set_submenu($item->{menu});
+
+    $item->signal_connect("activate" => sub {
+        my $self = shift;
+        $self->{function}->($self->{menu});
+        $self->show_all;
+    });
+
     return $item;
 }
 
@@ -857,15 +926,14 @@ sub updateProjectData() {
     if ($project == undef) {
         return;
     }
-    $project = loadHashTree($project->{file});
+    my $f = $runtime->{file};
+    $project = loadHashTree($f);
 
     updateMenus();
 }
 
 sub writeProjectFile() {
-    print "This is what I want to save:\n";
-    print Dumper($project);
-    saveHashTree($project, $project->{file});
+    saveHashTree($project, $runtime->{file});
 } 
 
 
@@ -879,39 +947,39 @@ sub handleSigChld() {
     while ((my $child = waitpid(-1, WNOHANG)) > 0) {
         my $status = $?;
         if ($status == 6 || $status == 0) {
-            if ($project->{pids}->{gschem} == $child) {
-                $project->{pids}->{gschem} = undef;
+            if ($runtime->{pids}->{gschem} == $child) {
+                $runtime->{pids}->{gschem} = undef;
             }
-            if ($project->{pids}->{pcb} == $child) {
-                $project->{pids}->{pcb} = undef;
-                $project->{handles}->{pcb} = undef;
+            if ($runtime->{pids}->{pcb} == $child) {
+                $runtime->{pids}->{pcb} = undef;
+                $runtime->{handles}->{pcb} = undef;
             }
-            if ($project->{pids}->{render} == $child) {
-                $project->{pids}->{render} = undef;
+            if ($runtime->{pids}->{render} == $child) {
+                $runtime->{pids}->{render} = undef;
             }
         }
     }
 }
 
 sub getProjectDir() {
-    my @dirparts = split(/\//, $project->{file});
+    my @dirparts = split(/\//, $runtime->{file});
     pop(@dirparts);
     my $dir = join("/", @dirparts);
     return $dir;
 }
 
 sub savePCB() {
-    if ($project->{handles}->{pcb}) {
-        print {$project->{handles}->{pcb}} "Save(Layout)\n";
+    if ($runtime->{handles}->{pcb}) {
+        print {$runtime->{handles}->{pcb}} "Save(Layout)\n";
     }
 }
 
 sub saveGSchem() {
-    if ($project->{handles}->{gschem}) {
+    if ($runtime->{handles}->{gschem}) {
         my @paths = getSchematics();
         foreach my $schem (@paths) {
             $schem =~ s/ /\\ /g;
-            print {$project->{handles}->{gschem}} "save $schem\n";
+            print {$runtime->{handles}->{gschem}} "save $schem\n";
         }
     }
 }
@@ -958,14 +1026,16 @@ sub saveSettings() {
         mkdir("$HOME/.config/gaf-project");
     }
 
-    store(\%{$settings}, "$HOME/.config/gaf-project/gaf-project.conf");
+    saveHashTree($settings, $path);
+#    store(\%{$settings}, "$HOME/.config/gaf-project/gaf-project.conf");
 }
 
 sub loadSettings() {
     if (! -f "$HOME/.config/gaf-project/gaf-project.conf") {
         saveSettings();
     }
-    %{$settings} = %{retrieve("$HOME/.config/gaf-project/gaf-project.conf")};
+#    %{$settings} = %{retrieve("$HOME/.config/gaf-project/gaf-project.conf")};
+    $settings = loadHashTree("$HOME/.config/gaf-project/gaf-project.conf");
 }
 
 sub copyFileWithReplacements($$$) {
@@ -1021,7 +1091,6 @@ q!
     my $param;
     while (my $out = <CHILD_OUT>) {
         chomp($out);
-        print "$out\n";
         if ($out =~ /Script eval:.*bbox_naked\.([xy])/) {
             $param = $1;
             $bbox->{outline}->{$param}->{min} = 9999999999;
@@ -1100,9 +1169,6 @@ sub saveHashTree($$) {
 
     my $data = flattenTree($hashtree, undef);
 
-    print "This is after flattening:\n";
-    print Dumper($data);
-
     open(OUT, ">$file");
     foreach my $key (sort keys %{$data}) {
         print OUT "$key = ";
@@ -1158,7 +1224,6 @@ sub expandTree($) {
             my @spl = split(/,/, $s);
             $val = \@spl;
         }
-        print "[$key] = [$val]\n";
 
         # There has to be a better way of doing this...
 
