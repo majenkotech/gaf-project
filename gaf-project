@@ -537,6 +537,7 @@ sub action_tools_export_gerber() {
             "bom",
             "--bomfile",
             "$stub.bom",
+            $pcb
         );
         vsystem("pcb-rnd", @args);
         @args = (
@@ -572,7 +573,7 @@ sub action_tools_export_blender() {
     my $dnp = getDoNotPopulateList();
 
     my $dir = getProjectDir();
-    my $gerberdir = "$dir/Render";
+    my $gerberdir = "$dir/Render/";
 
     my $tokens;
     $tokens->{RENDERDIR} = $gerberdir;
@@ -620,17 +621,17 @@ sub action_tools_export_blender() {
         );
 
 
-        my @args = (
-            "-x",
-            "gerber",
-            "--coord-format",
-            "micrometer",
-            "--name-style",
-            "fixed",
-            "--gerberfile",
-            $stub,
-            $pcb
-        );
+#        my @args = (
+#            "-x",
+#            "gerber",
+#            "--coord-format",
+#            "micrometer",
+#            "--name-style",
+#            "fixed",
+#            "--gerberfile",
+#            $stub,
+#            $pcb
+#        );
         vsystem("pcb-rnd", @args);
 
         @args = (
