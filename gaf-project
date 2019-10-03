@@ -15,14 +15,14 @@ Gtk2->init;
 $SIG{CHLD} = \&handleSigChld;
 $SIG{SEGV} = "IGNORE";
 
-addStockIcon("gschem", "Open _Schematic", "S", "/usr/share/icons/hicolor/scalable/apps/geda-gschem.svg");
-addStockIcon("pcb", "Open _PCB", "P", "/usr/share/icons/hicolor/scalable/apps/pcb.svg");
-addStockIcon("gattrib", "Open _Attribute Editor", "A", "/usr/share/icons/hicolor/scalable/apps/geda-gattrib.svg");
-addStockIcon("gsch2pcb", "_Update PCB From Schematic", "U", "/usr/share/icons/hicolor/scalable/mimetypes/application-x-geda-gsch2pcb-project.svg");
-addStockIcon("project-properties", "Project _Properties", "P", "/usr/share/icons/hicolor/scalable/apps/software-properties.svg");
-addStockIcon("export-pdf", "Export Schematic _PDF", "P", "/usr/share/icons/breeze/mimetypes/32/application-pdf.svg");
-addStockIcon("export-gerber", "Export PCB _Gerbers", "G", "/usr/share/icons/hicolor/scalable/mimetypes/application-x-gerber.svg");
-addStockIcon("export-blender", "Export PCB _Blender Files", "B", "/usr/share/icons/hicolor/scalable/apps/blender.svg");
+addStockIcon("gschem", "Open _Schematic", "S", "/usr/share/gaf-project/icons/geda-gschem.svg");
+addStockIcon("pcb", "Open _PCB", "P", "/usr/share/gaf-project/icons/pcb.svg");
+addStockIcon("gattrib", "Open _Attribute Editor", "A", "/usr/share/gaf-project/icons/geda-gattrib.svg");
+addStockIcon("gsch2pcb", "_Update PCB From Schematic", "U", "/usr/share/gaf-project/icons/application-x-geda-gsch2pcb-project.svg");
+addStockIcon("project-properties", "Project _Properties", "P", "/usr/share/gaf-project/icons/software-properties.svg");
+addStockIcon("export-pdf", "Export Schematic _PDF", "P", "/usr/share/gaf-project/icons/application-pdf.svg");
+addStockIcon("export-gerber", "Export PCB _Gerbers", "G", "/usr/share/gaf-project/icons/application-x-gerber.svg");
+addStockIcon("export-blender", "Export PCB _Blender Files", "B", "/usr/share/gaf-project/icons/blender.svg");
 
 my $window = new Gtk2::Window;
 
