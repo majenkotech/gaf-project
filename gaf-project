@@ -296,7 +296,7 @@ sub action_project_gschem {
         my $exists = kill 0, $runtime->{pids}->{gschem};
         if ($exists) {
             if (fork() == 0) {
-                my $id = getWindowIDByPID($runtime->{pids}->{gschem}, "gschem");
+                my $id = getWindowIDByPID($runtime->{pids}->{gschem}, "lepton-schematic");
                 raiseWindowToFront($id);
                 exit(0);
             }
@@ -305,12 +305,12 @@ sub action_project_gschem {
     }
 
     my @args = getSchematics();
-    unshift(@args, "--control-fd=stdin");
+#    unshift(@args, "--control-fd=stdin");
     
     my $pid = open(my $fh, "|-");
 
     if (!$pid) {
-        exec "gschem", @args;
+        exec "lepton-schematic", @args;
     } else {
         $runtime->{pids}->{gschem} = $pid;
         $runtime->{handles}->{gschem} = $fh;
