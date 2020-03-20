@@ -357,6 +357,44 @@ sub action_project_pcb {
         $filename = $pcbfilename;
     }
 
+    my @stat = stat($filename);
+    my $when = $stat[9];
+    my $backup = "";
+
+    opendir(my $dh, $dir);
+    my $fn = sprintf("%s.lht", $project->{name});
+    while (my $scanfile = readdir($dh)) {
+        if ($scanfile =~ /^\Q$fn\E\.(\d+)\.backup$/) {
+            printf("Backup %s found\n", $scanfile);
+            my $fullf = sprintf("%s/%s", $dir, $scanfile);
+            @stat = stat($fullf);
+            my $tester = $stat[9];
+            if ($tester > $when) {
+                $when = $tester;
+                $backup = $scanfile;
+            }
+        }
+    }
+
+    if ($backup ne "") {
+        my $flags =  [qw/modal destroy-with-parent/];
+        printf("Potentially newer file %s found!\n", $backup);
+        my $confirm = Gtk2::Dialog->new_with_buttons("Backup found", $window, $flags, 'Yes'=>'yes', 'No'=>'no');
+        my $info = Gtk2::Label->new("A newer backup file has been found.");
+#\nWould you like to open that instead?");
+        my $ca = $confirm->get_content_area();
+
+        $ca->pack_start($info, FALSE, FALSE, 0);
+        
+        my $response = $confirm->run;
+        $confirm->destroy;
+        if ($response eq 'yes') {
+            rename($filename, "$filename.saved");
+            rename("$dir/$backup", "$filename");
+        }
+    }
+
+
     my @args;
     push(@args, "--listen");
     push(@args, $filename);
@@ -397,16 +435,20 @@ sub action_project_gsch2pcb {
 
             print {$runtime->{handles}->{pcb}} "Deselect(All)\n";
 
-            my $command = "Import(gnetlist,";
+#ImportSch(setup, gnetlist, sheet1.sch, sheet2.sch)
+            my $command = "ImportSch(setup, gnetlist,";
             foreach my $path (@paths) {
-                if ($command ne "Import(gnetlist,") {
-                    $command += "$command,";
+                if ($command ne "ImportSch(setup, gnetlist,") {
+                    $command += " $command,";
                 }
                 $command = "$command\"$path\"";
             }
             $command = "$command)\n";
 
+print $command;
             print {$runtime->{handles}->{pcb}} $command;
+
+            print {$runtime->{handles}->{pcb}} "ImportSch()\n";
 
             print {$runtime->{handles}->{pcb}} "Delete(Selected)\n";
         }
@@ -1078,8 +1120,8 @@ sub getBoardBoundingBox() {
     print CHILD_IN qq{
 query(unselect, '@')
 query(select, '@.layer.type == BOUNDARY')
-propset(p/trace/thickness, 1um)
-propset(p/trace/clearance, 1um)
+propset(p/trace/thickness, 1nm)
+propset(p/trace/clearance, 1nm)
 query(eval, '@.layer.type == BOUNDARY thus @.bbox_naked.x1')
 query(eval, '@.layer.type == BOUNDARY thus @.bbox_naked.x2')
 query(eval, '@.layer.type == BOUNDARY thus @.bbox_naked.y1')
