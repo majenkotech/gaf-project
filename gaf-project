@@ -451,7 +451,6 @@ sub action_project_gsch2pcb {
             }
             $command = "$command)\n";
 
-print $command;
             print {$runtime->{handles}->{pcb}->{stdin}} $command;
 
             print {$runtime->{handles}->{pcb}->{stdin}} "ImportSch()\n";
@@ -619,6 +618,7 @@ sub action_tools_export_blender() {
 
     my $bbox = getBoardBoundingBox();
     my $dnp = getDoNotPopulateList();
+    my $rot = getRotationOverrideList();
 
     my $dir = getProjectDir();
     my $gerberdir = "$dir/Render/";
@@ -636,7 +636,7 @@ sub action_tools_export_blender() {
     $tokens->{SILK} = $project->{export}->{blender}->{silk};
     $tokens->{FINISH} = $project->{export}->{blender}->{finish};
     
-    my $dlist == "";
+    my $dlist = "";
 
     foreach my $d (@{$dnp}) {
         if ($dlist ne "") {
@@ -645,6 +645,17 @@ sub action_tools_export_blender() {
         $dlist = "$dlist        \"$d\": 1";
     }
     $tokens->{DNPLIST} = $dlist;
+
+    my $rlist = "";
+
+    foreach my $r (keys %{$rot}) {
+        if ($rlist ne "") {
+            $rlist = "$rlist,\n";
+        }
+        my $rotation = $rot->{$r};
+        $rlist = "$rlist        \"$r\": $rotation";
+    }
+    $tokens->{ROTLIST} = $rlist;
 
     copyFileWithReplacements(findFile("pcbblend.py"), "$dir/pcbblend.py", $tokens);
 
@@ -1135,20 +1146,22 @@ sub getBoardBoundingBox() {
         $stdin = $runtime->{handles}->{pcb}->{stdin};
         $stdout = $runtime->{handles}->{pcb}->{stdout};
         $stderr = $runtime->{handles}->{pcb}->{stderr};
+        print "Using existing process\n";
     } else {
         $pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
+        print "Starging new process\n";
     }
+#propset(p/trace/thickness, 1nm)
+#propset(p/trace/clearance, 1nm)
     print $stdin qq{
 query(unselect, '@')
 query(select, '@.layer.type == BOUNDARY')
-propset(p/trace/thickness, 1nm)
-propset(p/trace/clearance, 1nm)
 query(eval, '@.layer.type == BOUNDARY thus @.bbox_naked.x1')
 query(eval, '@.layer.type == BOUNDARY thus @.bbox_naked.x2')
 query(eval, '@.layer.type == BOUNDARY thus @.bbox_naked.y1')
 query(eval, '@.layer.type == BOUNDARY thus @.bbox_naked.y2')
 propprint(board)
-q!
+query(unselect, '@')
 };
 
     my $bbox;
@@ -1160,7 +1173,6 @@ q!
     $bbox->{outline}->{y}->{max} = 0;
     while (my $out = <$stdout>) {
         chomp($out);
-print "$out\n";
         if ($out =~ /Script eval:.*bbox_naked\.([xy])/) {
             $param = $1;
             next;
@@ -1186,13 +1198,24 @@ print "$out\n";
             $bbox->{board}->{$param} = $1;
             next;
         }
+
+        if ($out =~ /a\/import::src0/) {
+            last;
+        }
     }
 
     if ($pid != -1) {
+        print "Closing process I started\n";
+        print $stdin "q!\n";
         close($stdin);
         close($stdout);
-        close($stderr);
+#        close($stderr);
     }
+
+    $bbox->{outline}->{x}->{min} -= 0.075;
+    $bbox->{outline}->{x}->{max} -= 0.075;
+    $bbox->{outline}->{y}->{min} += 0.075;
+    $bbox->{outline}->{y}->{max} -= 0.075;
 
     print Dumper($bbox);
 
@@ -1218,34 +1241,158 @@ sub getDoNotPopulateList() {
     my $pid = -1;
 
     if ($runtime->{handles}->{pcb}->{stdin}) {
+        print "Using existing process\n";
         $stdin = $runtime->{handles}->{pcb}->{stdin};
         $stdout = $runtime->{handles}->{pcb}->{stdout};
         $stderr = $runtime->{handles}->{pcb}->{stderr};
     } else {
+        print "Starting new process\n";
         $pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
     }
 
     print $stdin qq{
 query(eval, '@.a.dnp == "true" thus @.refdes')
-q!
 };
 
     my $refdes;
     while (my $out = <$stdout>) {
         chomp($out);
+        if ($out =~ /^eval statistics: /) {
+            last;
+        }
+
         if ($out =~ /^ "(.*)"$/) {
             push(@{$refdes}, $1);
         }
     }
 
     if ($pid != -1) {
+        print "Closing process I started\n";
+        print $stdin "q!\n";
         close($stdin);
         close($stdout);
-        close($stderr);
+#        close($stderr);
     }
 
     return $refdes;
 }
+
+sub getRotationOverrideList() {
+
+    my $dir = getProjectDir();
+    my $pcbfilename = sprintf("%s/%s.pcb", $dir, $project->{name});
+    my $lhtfilename = sprintf("%s/%s.lht", $dir, $project->{name});
+
+    my $filename;
+    if ( -f $lhtfilename ) {
+        $filename = $lhtfilename;
+    } else {
+        $filename = $pcbfilename;
+    }
+
+    my $stdin;
+    my $stdout;
+    my $stderr;
+    my $pid = -1;
+
+    if ($runtime->{handles}->{pcb}->{stdin}) {
+        print "Using existing process\n";
+        $stdin = $runtime->{handles}->{pcb}->{stdin};
+        $stdout = $runtime->{handles}->{pcb}->{stdout};
+        $stderr = $runtime->{handles}->{pcb}->{stderr};
+    } else {
+        print "Starting new process\n";
+        $pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
+    }
+
+    print $stdin qq{
+query(eval, '@.a.rotate == "90" thus @.refdes')
+};
+    my $refdes;
+    while (my $out = <$stdout>) {
+        chomp($out);
+        if ($out =~ /^eval statistics: /) {
+            last;
+        }
+
+        if ($out =~ /^ "(.*)"$/) {
+            $refdes->{$1} = 90;
+        }
+    }
+
+    print $stdin qq{
+query(eval, '@.a.rotate == "180" thus @.refdes')
+};
+    my $refdes;
+    while (my $out = <$stdout>) {
+        chomp($out);
+        if ($out =~ /^eval statistics: /) {
+            last;
+        }
+
+        if ($out =~ /^ "(.*)"$/) {
+            $refdes->{$1} = 180;
+        }
+    }
+
+    print $stdin qq{
+query(eval, '@.a.rotate == "270" thus @.refdes')
+};
+    my $refdes;
+    while (my $out = <$stdout>) {
+        chomp($out);
+        if ($out =~ /^eval statistics: /) {
+            last;
+        }
+
+        if ($out =~ /^ "(.*)"$/) {
+            $refdes->{$1} = 270;
+        }
+    }
+    print $stdin qq{
+query(eval, '@.a.rotate == "360" thus @.refdes')
+};
+    my $refdes;
+    while (my $out = <$stdout>) {
+        chomp($out);
+        if ($out =~ /^eval statistics: /) {
+            last;
+        }
+
+        if ($out =~ /^ "(.*)"$/) {
+            $refdes->{$1} = 360;
+        }
+    }
+    print $stdin qq{
+query(eval, '@.a.rotate == "0" thus @.refdes')
+};
+    my $refdes;
+    while (my $out = <$stdout>) {
+        chomp($out);
+        if ($out =~ /^eval statistics: /) {
+            last;
+        }
+
+        if ($out =~ /^ "(.*)"$/) {
+            $refdes->{$1} = 360;
+        }
+    }
+
+
+
+    if ($pid != -1) {
+        print "Closing process I started\n";
+        print $stdin "q!\n";
+        close($stdin);
+        close($stdout);
+#        close($stderr);
+    }
+
+print Dumper($refdes);
+
+    return $refdes;
+}
+
 
 sub saveHashTree($$) {
     my $hashtree = shift;
