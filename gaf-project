@@ -8,7 +8,7 @@ use Data::Dumper;
 use POSIX ":sys_wait_h";
 use File::Copy;
 use Storable;
-use IPC::Open2;
+use IPC::Open3;
 
 Gtk2->init;
 
@@ -278,11 +278,11 @@ sub action_project_exit {
     savePCB();
     saveGSchem();
 
-    if ($runtime->{handles}->{pcb}) {
-        print {$runtime->{handles}->{pcb}} "Quit\n";
+    if ($runtime->{handles}->{pcb}->{stdin}) {
+        print {$runtime->{handles}->{pcb}->{stdin}} "Quit\n";
     }
-    if ($runtime->{handles}->{gschem}) {
-        print {$runtime->{handles}->{gschem}} "quit\n";
+    if ($runtime->{handles}->{gschem}->{stdin}) {
+        print {$runtime->{handles}->{gschem}->{stdin}} "quit\n";
     }
 
     usleep(10000);
@@ -307,13 +307,16 @@ sub action_project_gschem {
     my @args = getSchematics();
 #    unshift(@args, "--control-fd=stdin");
     
-    my $pid = open(my $fh, "|-");
+    #my $pid = open3(my $rd, "|-");
+    my $pid = open3(my $rd, my $wr, my $er, "-");
 
     if (!$pid) {
         exec "lepton-schematic", @args;
     } else {
         $runtime->{pids}->{gschem} = $pid;
-        $runtime->{handles}->{gschem} = $fh;
+        $runtime->{handles}->{gschem}->{stdin} = $rd;
+        $runtime->{handles}->{gschem}->{stdout} = $wr;
+        $runtime->{handles}->{gschem}->{stderr} = $er;
     }
 }
 
@@ -399,13 +402,16 @@ sub action_project_pcb {
     push(@args, "--listen");
     push(@args, $filename);
 
-    my $pid = open(my $fh, "|-");
+    #my $pid = open(my $rd, "|-");
+    my $pid = open3(my $rd, my $wr, my $er, "-");
 
     if (!$pid) {
         exec "pcb-rnd", @args;
     } else {
         $runtime->{pids}->{pcb} = $pid;
-        $runtime->{handles}->{pcb} = $fh;
+        $runtime->{handles}->{pcb}->{stdin} = $rd;
+        $runtime->{handles}->{pcb}->{stdout} = $wr;
+        $runtime->{handles}->{pcb}->{stderr} = $er;
     }
 }
 
@@ -423,17 +429,17 @@ sub action_project_gsch2pcb {
         unshift(@args, "--pgskip");
         vsystem("refdes_renum", @args);
 
-        if ($runtime->{handles}->{gschem}) {
+        if ($runtime->{handles}->{gschem}->{stdin}) {
             my @paths = getSchematics();
             foreach my $schem (@paths) {
                 $schem =~ s/ /\\ /g;
-                print {$runtime->{handles}->{gschem}} "revert $schem\n";
+                print {$runtime->{handles}->{gschem}->{stdin}} "revert $schem\n";
             }
         }
-        if ($runtime->{handles}->{pcb}) {
+        if ($runtime->{handles}->{pcb}->{stdin}) {
             my @paths = getSchematics();
 
-            print {$runtime->{handles}->{pcb}} "Deselect(All)\n";
+            print {$runtime->{handles}->{pcb}->{stdin}} "Deselect(All)\n";
 
 #ImportSch(setup, gnetlist, sheet1.sch, sheet2.sch)
             my $command = "ImportSch(setup, gnetlist,";
@@ -446,11 +452,11 @@ sub action_project_gsch2pcb {
             $command = "$command)\n";
 
 print $command;
-            print {$runtime->{handles}->{pcb}} $command;
+            print {$runtime->{handles}->{pcb}->{stdin}} $command;
 
-            print {$runtime->{handles}->{pcb}} "ImportSch()\n";
+            print {$runtime->{handles}->{pcb}->{stdin}} "ImportSch()\n";
 
-            print {$runtime->{handles}->{pcb}} "Delete(Selected)\n";
+            print {$runtime->{handles}->{pcb}->{stdin}} "Delete(Selected)\n";
         }
         exit(0);
     }
@@ -992,10 +998,15 @@ sub handleSigChld() {
         if ($status == 6 || $status == 0) {
             if ($runtime->{pids}->{gschem} == $child) {
                 $runtime->{pids}->{gschem} = undef;
+                $runtime->{handles}->{gschem}->{stdin} = undef;
+                $runtime->{handles}->{gschem}->{stdout} = undef;
+                $runtime->{handles}->{gschem}->{stderr} = undef;
             }
             if ($runtime->{pids}->{pcb} == $child) {
                 $runtime->{pids}->{pcb} = undef;
-                $runtime->{handles}->{pcb} = undef;
+                $runtime->{handles}->{pcb}->{stdin} = undef;
+                $runtime->{handles}->{pcb}->{stdout} = undef;
+                $runtime->{handles}->{pcb}->{stderr} = undef;
             }
             if ($runtime->{pids}->{render} == $child) {
                 $runtime->{pids}->{render} = undef;
@@ -1012,17 +1023,17 @@ sub getProjectDir() {
 }
 
 sub savePCB() {
-    if ($runtime->{handles}->{pcb}) {
-        print {$runtime->{handles}->{pcb}} "Save(Layout)\n";
+    if ($runtime->{handles}->{pcb}->{stdin}) {
+        print {$runtime->{handles}->{pcb}->{stdin}} "Save(Layout)\n";
     }
 }
 
 sub saveGSchem() {
-    if ($runtime->{handles}->{gschem}) {
+    if ($runtime->{handles}->{gschem}->{stdin}) {
         my @paths = getSchematics();
         foreach my $schem (@paths) {
             $schem =~ s/ /\\ /g;
-            print {$runtime->{handles}->{gschem}} "save $schem\n";
+            print {$runtime->{handles}->{gschem}->{stdin}} "save $schem\n";
         }
     }
 }
@@ -1115,9 +1126,19 @@ sub getBoardBoundingBox() {
         $filename = $pcbfilename;
     }
 
-    my $pid = open2(\*CHILD_OUT, \*CHILD_IN, "pcb-rnd", "--gui", "batch", $filename);
+    my $stdin;
+    my $stdout;
+    my $stderr;
+    my $pid = -1;
 
-    print CHILD_IN qq{
+    if ($runtime->{handles}->{pcb}->{stdin}) {
+        $stdin = $runtime->{handles}->{pcb}->{stdin};
+        $stdout = $runtime->{handles}->{pcb}->{stdout};
+        $stderr = $runtime->{handles}->{pcb}->{stderr};
+    } else {
+        $pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
+    }
+    print $stdin qq{
 query(unselect, '@')
 query(select, '@.layer.type == BOUNDARY')
 propset(p/trace/thickness, 1nm)
@@ -1132,12 +1153,16 @@ q!
 
     my $bbox;
     my $param;
-    while (my $out = <CHILD_OUT>) {
+
+    $bbox->{outline}->{x}->{min} = 9999999999;
+    $bbox->{outline}->{x}->{max} = 0;
+    $bbox->{outline}->{y}->{min} = 9999999999;
+    $bbox->{outline}->{y}->{max} = 0;
+    while (my $out = <$stdout>) {
         chomp($out);
+print "$out\n";
         if ($out =~ /Script eval:.*bbox_naked\.([xy])/) {
             $param = $1;
-            $bbox->{outline}->{$param}->{min} = 9999999999;
-            $bbox->{outline}->{$param}->{max} = 0;
             next;
         }
 
@@ -1146,8 +1171,8 @@ q!
             next;
         }
 
-        if ($out =~ /true \((\d+)\)/) {
-            my $val = $1;
+        if ($out =~ /true \((\d+)=(.*)\s+mm\)/) {
+            my $val = $2;
             if ($val < $bbox->{outline}->{$param}->{min}) {
                 $bbox->{outline}->{$param}->{min} = $val;
             }
@@ -1162,13 +1187,14 @@ q!
             next;
         }
     }
-    close(CHILD_IN);
-    close(CHILD_OUT);
 
-    $bbox->{outline}->{x}->{min} = sprintf("%.2f", $bbox->{outline}->{x}->{min} / 1000000);
-    $bbox->{outline}->{x}->{max} = sprintf("%.2f", $bbox->{outline}->{x}->{max} / 1000000);
-    $bbox->{outline}->{y}->{min} = sprintf("%.2f", $bbox->{outline}->{y}->{min} / 1000000);
-    $bbox->{outline}->{y}->{max} = sprintf("%.2f", $bbox->{outline}->{y}->{max} / 1000000);
+    if ($pid != -1) {
+        close($stdin);
+        close($stdout);
+        close($stderr);
+    }
+
+    print Dumper($bbox);
 
     return $bbox;
 }
@@ -1186,22 +1212,37 @@ sub getDoNotPopulateList() {
         $filename = $pcbfilename;
     }
 
-    my $pid = open2(\*CHILD_OUT, \*CHILD_IN, "pcb-rnd", "--gui", "batch", $filename);
+    my $stdin;
+    my $stdout;
+    my $stderr;
+    my $pid = -1;
 
-    print CHILD_IN qq{
+    if ($runtime->{handles}->{pcb}->{stdin}) {
+        $stdin = $runtime->{handles}->{pcb}->{stdin};
+        $stdout = $runtime->{handles}->{pcb}->{stdout};
+        $stderr = $runtime->{handles}->{pcb}->{stderr};
+    } else {
+        $pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
+    }
+
+    print $stdin qq{
 query(eval, '@.a.dnp == "true" thus @.refdes')
 q!
 };
 
     my $refdes;
-    while (my $out = <CHILD_OUT>) {
+    while (my $out = <$stdout>) {
         chomp($out);
         if ($out =~ /^ "(.*)"$/) {
             push(@{$refdes}, $1);
         }
     }
-    close(CHILD_IN);
-    close(CHILD_OUT);
+
+    if ($pid != -1) {
+        close($stdin);
+        close($stdout);
+        close($stderr);
+    }
 
     return $refdes;
 }

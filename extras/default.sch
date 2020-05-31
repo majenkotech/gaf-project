@@ -1,0 +1,16 @@
+v 20150930 2
+C -16000 -11500 0 0 0 title-bordered-A1-tagged.sym
+{
+T 9900 -10600 15 32 1 1 0 0 1
+title=%PROJECT%
+T 9900 -10900 15 10 1 1 0 0 1
+file=%FILENAME%
+T 9900 -11200 15 10 1 1 0 0 1
+page=1
+T 11400 -11200 15 10 1 1 0 0 1
+pages=1
+T 13800 -10900 15 10 1 1 0 0 1
+revision=1
+T 13800 -11200 15 10 1 1 0 0 1
+author=%USERNAME%
+}
