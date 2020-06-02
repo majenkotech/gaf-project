@@ -280,12 +280,16 @@ class PCBImport(bpy.types.Operator):
         self.outlineCurve.location = [self.offset_x, self.offset_y, -0.8]
 
     def drillBoard(self):
+        drillStart = time.time()
+        print("Starting to drill board...")
+        wm = bpy.context.window_manager
         posscale = 1
         drillscale = 1
         drillsDone = []
         self.selectAll()
         with open(self.file_drill, newline='', encoding='ISO-8859-15') as f:
             content = f.read().splitlines()
+
         drills = {}
         inHeader = True
         drillWidth = 0
@@ -317,21 +321,28 @@ class PCBImport(bpy.types.Operator):
                     x = x * posscale
                     y = y * posscale
                     pos = Vector((x, y, 0))
-                    if (pos not in drillsDone):
-                        drillsDone.append(pos)
-                        bpy.ops.curve.primitive_bezier_circle_add(radius = drillWidth / 2, location = (x, y, -0.8))
-                        holes.append(bpy.context.active_object);
+                    print(pos)
+#                    if (pos not in drillsDone):
+#                        drillsDone.append(pos)
+                    bpy.ops.curve.primitive_bezier_circle_add(radius = drillWidth / 2, location = (x, y, -0.8))
+                    holes.append(bpy.context.active_object);
 
+        print("Deselecting all")
         self.deselectAll()
 
+        print("Selecting holes")
         for c in holes:
             self.setSelect(c, True)
+        print("Selecting outline")
         self.setSelect(self.outlineCurve, True)
         self.setActiveObject(self.outlineCurve)
+        print("Joining all curves")
         bpy.ops.object.join()
+        print(time.time() - drillStart)
 
 
     def extrudeBoard(self):
+        print("Starting extrude")
         self.outlineCurve.data.extrude = 0.8
         self.outlineCurve.data.dimensions = "2D"
         self.outlineCurve.data.fill_mode = 'BOTH'
@@ -345,6 +356,7 @@ class PCBImport(bpy.types.Operator):
         self.setMode('OBJECT')
         self.pcb = bpy.context.object
         self.pcb.name = 'PCB'
+        print("Extrude done")
 
 
     def loadMaterials(self):
@@ -372,7 +384,7 @@ class PCBImport(bpy.types.Operator):
         top.node_tree.nodes['pcbtexture'].inputs['Color'].default_value = self.color
         top.node_tree.nodes['pcbtexture'].inputs['Finish'].default_value = self.finish
         top.node_tree.nodes['pcbtexture'].inputs['Silk Color'].default_value = self.silk
-        top.node_tree.nodes['mapping'].inputs['Scale'].default_value = (0.996, 0.996, 1)
+        top.node_tree.nodes['mapping'].inputs['Scale'].default_value = (1.000, 1.000, 1)
         top.node_tree.nodes['mapping'].inputs['Location'].default_value = (0, 0.00, 0)
         
         btm.node_tree.nodes['copper'].image = bpy.data.images.load(filepath = self.file_root + "/" + self.file_name + ".bottom.png")
@@ -381,8 +393,8 @@ class PCBImport(bpy.types.Operator):
         btm.node_tree.nodes['pcbtexture'].inputs['Color'].default_value = self.color
         btm.node_tree.nodes['pcbtexture'].inputs['Finish'].default_value = self.finish
         btm.node_tree.nodes['pcbtexture'].inputs['Silk Color'].default_value = self.silk
-        btm.node_tree.nodes['mapping'].inputs['Scale'].default_value = (0.996, -0.996, 1)
-        btm.node_tree.nodes['mapping'].inputs['Location'].default_value = (0, 0.005, 0)
+        btm.node_tree.nodes['mapping'].inputs['Scale'].default_value = (1.000, -1.000, 1)
+        btm.node_tree.nodes['mapping'].inputs['Location'].default_value = (0, 0, 0)
                     
         self.pcb.data.materials.append(bpy.data.materials['Metal'])
         self.pcb.data.materials.append(top)
@@ -397,6 +409,7 @@ class PCBImport(bpy.types.Operator):
         return f.area
 
     def assignMaterials(self):
+        print("Assigning materials")
         # Metal
         self.clearMeshSelections()
         self.setMode('OBJECT')
@@ -406,6 +419,7 @@ class PCBImport(bpy.types.Operator):
         self.setMode('EDIT')
         bpy.ops.object.material_slot_assign()
         self.setMode('OBJECT')
+        print("Metal assigned")
 
         ## PCBTop
         self.clearMeshSelections()
@@ -415,6 +429,7 @@ class PCBImport(bpy.types.Operator):
         self.setMode('EDIT')
         bpy.ops.object.material_slot_assign()
         self.setMode('OBJECT')
+        print("Top assigned")
 
         # PCBBottom
         self.clearMeshSelections()
@@ -424,6 +439,7 @@ class PCBImport(bpy.types.Operator):
         self.setMode('EDIT')
         bpy.ops.object.material_slot_assign()
         self.setMode('OBJECT')
+        print("Bottom assigned")
 
         # PCB Substrate
 
@@ -441,6 +457,7 @@ class PCBImport(bpy.types.Operator):
         self.setMode('EDIT')
         bpy.ops.object.material_slot_assign()
         self.setMode('OBJECT')
+        print("Assignments done");
 
     def selectTopView(self):
         self.clearMeshSelections()

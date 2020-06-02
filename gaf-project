@@ -1149,7 +1149,7 @@ sub getBoardBoundingBox() {
         print "Using existing process\n";
     } else {
         $pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
-        print "Starging new process\n";
+        print "Starting new process for outline query\n";
     }
 #propset(p/trace/thickness, 1nm)
 #propset(p/trace/clearance, 1nm)
@@ -1173,6 +1173,7 @@ query(unselect, '@')
     $bbox->{outline}->{y}->{max} = 0;
     while (my $out = <$stdout>) {
         chomp($out);
+print "$out\n" unless $out eq " <void>";
         if ($out =~ /Script eval:.*bbox_naked\.([xy])/) {
             $param = $1;
             next;
@@ -1194,9 +1195,24 @@ query(unselect, '@')
             next;
         }
 
+        if ($out =~ /true \((\d+)=(.*)\s+mil\)/) {
+            my $val = $2 * 0.0254;
+            if ($val < $bbox->{outline}->{$param}->{min}) {
+                $bbox->{outline}->{$param}->{min} = $val;
+            }
+            if ($val > $bbox->{outline}->{$param}->{max}) {
+                $bbox->{outline}->{$param}->{max} = $val;
+            }
+            next;
+        }
+
         if ($out =~ /common='(.*)mm'/) {
             $bbox->{board}->{$param} = $1;
-            next;
+            if ($bbox->{board}->{height} && $bbox->{board}->{width}) {
+                last;
+            } else {
+                next;
+            }
         }
 
         if ($out =~ /a\/import::src0/) {
@@ -1246,7 +1262,7 @@ sub getDoNotPopulateList() {
         $stdout = $runtime->{handles}->{pcb}->{stdout};
         $stderr = $runtime->{handles}->{pcb}->{stderr};
     } else {
-        print "Starting new process\n";
+        print "Starting new process for Do Not Populate query\n";
         $pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
     }
 
@@ -1301,7 +1317,7 @@ sub getRotationOverrideList() {
         $stdout = $runtime->{handles}->{pcb}->{stdout};
         $stderr = $runtime->{handles}->{pcb}->{stderr};
     } else {
-        print "Starting new process\n";
+        print "Starting new process for Rotation Override query\n";
         $pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
     }
 
