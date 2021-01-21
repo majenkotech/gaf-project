@@ -60,6 +60,7 @@ class PCBImport(bpy.types.Operator):
 
     # List of manual rotations in the form of {"refdes": angle, "refdes": angle...}
     rotations = {
+%ROTLIST%
     }
 
     dnp = {
@@ -70,14 +71,13 @@ class PCBImport(bpy.types.Operator):
     bl_idname = "wm.modal_timer_operator"
     bl_options = {'BLOCKING'}
 
-    file_outline    = file_root + file_name + ".outline.svg"
+    file_outline    = file_root + file_name + ".stl"
     file_drill      = file_root + file_name + ".plated-drill.cnc"
     file_csv        = file_root + file_name + ".xy"
 
 
 
     txt = None    
-    outlineCurve = None
     pcb = None
     objects = None
 
@@ -234,7 +234,7 @@ class PCBImport(bpy.types.Operator):
 
         linkedFaces = []
         for f in sideFaces:
-            if (len(f.vertices) == 4):
+            if (len(f.vertices) == 3):
                 if f.area > maxArea:
                     maxArea = f.area
                     maxObject = f
@@ -243,18 +243,13 @@ class PCBImport(bpy.types.Operator):
         linkedFaces.append(maxObject)
 
         while True:
-            print("-----------------------------------")
             foundsome = False
             foundFaces = []
             for testface in linkedFaces:
                 for face in sideFaces:
-                    if len(face.vertices) == 4:
+                    if len(face.vertices) == 3:
                         mv = self.matchingVertices(testface, face)
                         if (mv == 2):
-                            print("(" + str(testface.vertices[0]) + ", " + str(testface.vertices[1]) + ", " + str(testface.vertices[2]) + ", " + str(testface.vertices[3]) + ")")
-                            print("(" + str(face.vertices[0]) + ", " + str(face.vertices[1]) + ", " + str(face.vertices[2]) + ", " + str(face.vertices[3]) + ")")
-                            print(mv)
-                            print("")
                             if face not in foundFaces:
                                 foundFaces.append(face)
                             foundsome = True
@@ -269,82 +264,11 @@ class PCBImport(bpy.types.Operator):
             
 
     def importOutline(self):
-        self.selectAll()
-        bpy.ops.import_curve.svg(filepath = self.file_outline)
-        outline = [c for c in bpy.context.scene.objects if not self.getSelect(c)]
-
         self.deselectAll()
-
-        self.outlineCurve = outline[0]
-        self.outlineCurve.location = [self.offset_x, self.offset_y, -0.8]
-
-    def drillBoard(self):
-        posscale = 1
-        drillscale = 1
-        drillsDone = []
-        self.selectAll()
-        with open(self.file_drill, newline='', encoding='ISO-8859-15') as f:
-            content = f.read().splitlines()
-        drills = {}
-        inHeader = True
-        drillWidth = 0
-        bits = []
-        holes = []
-        nbits = 0
-        for line in content:
-            if line == '%':
-                inHeader = False
-                continue
-            if inHeader:
-                if line.startswith('T'):
-                    parts = line.split('C')
-                    drills[parts[0]] = float(parts[1]) * drillscale
-                if line == "INCH":
-                    posscale = 2.54
-                    drillscale = 25.4
-            else:
-                if line.startswith('T'):
-                    drillWidth = drills[line]
-                    continue
-                if line.startswith('X'):
-                    nbits = nbits + 1
-                    coords = line[1:].split('Y')
-                    x = float(coords[0])
-                    y = float(coords[1])
-                    x = x / 1000
-                    y = y / 1000
-                    x = x * posscale
-                    y = y * posscale
-                    pos = Vector((x, y, 0))
-                    if (pos not in drillsDone):
-                        drillsDone.append(pos)
-                        bpy.ops.curve.primitive_bezier_circle_add(radius = drillWidth / 2, location = (x, y, -0.8))
-                        holes.append(bpy.context.active_object);
-
+        bpy.ops.import_mesh.stl(filepath = self.file_outline)
+        outline = [c for c in bpy.context.scene.objects if self.getSelect(c)]
+        self.pcb = outline[0]
         self.deselectAll()
-
-        for c in holes:
-            self.setSelect(c, True)
-        self.setSelect(self.outlineCurve, True)
-        self.setActiveObject(self.outlineCurve)
-        bpy.ops.object.join()
-
-
-    def extrudeBoard(self):
-        self.outlineCurve.data.extrude = 0.8
-        self.outlineCurve.data.dimensions = "2D"
-        self.outlineCurve.data.fill_mode = 'BOTH'
-
-        bpy.ops.object.convert(target='MESH')
-        
-        self.meshSelectAll()
-        self.setMode('EDIT')
-        bpy.ops.mesh.remove_doubles(threshold = 0.01)
-
-        self.setMode('OBJECT')
-        self.pcb = bpy.context.object
-        self.pcb.name = 'PCB'
-
 
     def loadMaterials(self):
         with bpy.data.libraries.load(self.component_root + "/materials.blend", link=True) as (data_from, data_to):
@@ -371,7 +295,7 @@ class PCBImport(bpy.types.Operator):
         top.node_tree.nodes['pcbtexture'].inputs['Color'].default_value = self.color
         top.node_tree.nodes['pcbtexture'].inputs['Finish'].default_value = self.finish
         top.node_tree.nodes['pcbtexture'].inputs['Silk Color'].default_value = self.silk
-        top.node_tree.nodes['mapping'].inputs['Scale'].default_value = (0.996, 0.996, 1)
+        top.node_tree.nodes['mapping'].inputs['Scale'].default_value = (1.000, 1.000, 1)
         top.node_tree.nodes['mapping'].inputs['Location'].default_value = (0, 0.00, 0)
         
         btm.node_tree.nodes['copper'].image = bpy.data.images.load(filepath = self.file_root + "/" + self.file_name + ".bottom.png")
@@ -380,14 +304,13 @@ class PCBImport(bpy.types.Operator):
         btm.node_tree.nodes['pcbtexture'].inputs['Color'].default_value = self.color
         btm.node_tree.nodes['pcbtexture'].inputs['Finish'].default_value = self.finish
         btm.node_tree.nodes['pcbtexture'].inputs['Silk Color'].default_value = self.silk
-        btm.node_tree.nodes['mapping'].inputs['Scale'].default_value = (0.996, -0.996, 1)
-        btm.node_tree.nodes['mapping'].inputs['Location'].default_value = (0, 0.005, 0)
+        btm.node_tree.nodes['mapping'].inputs['Scale'].default_value = (1.000, -1.000, 1)
+        btm.node_tree.nodes['mapping'].inputs['Location'].default_value = (0, 0, 0)
                     
         self.pcb.data.materials.append(bpy.data.materials['Metal'])
         self.pcb.data.materials.append(top)
         self.pcb.data.materials.append(btm)
         self.pcb.data.materials.append(bpy.data.materials['PCB Substrate'])
-        bpy.data.materials.remove(bpy.data.materials['SVGMat'])
 
     def facesTouching(self, one, two):
         return False
@@ -396,6 +319,7 @@ class PCBImport(bpy.types.Operator):
         return f.area
 
     def assignMaterials(self):
+        print("Assigning materials")
         # Metal
         self.clearMeshSelections()
         self.setMode('OBJECT')
@@ -405,6 +329,7 @@ class PCBImport(bpy.types.Operator):
         self.setMode('EDIT')
         bpy.ops.object.material_slot_assign()
         self.setMode('OBJECT')
+        print("Metal assigned")
 
         ## PCBTop
         self.clearMeshSelections()
@@ -414,6 +339,7 @@ class PCBImport(bpy.types.Operator):
         self.setMode('EDIT')
         bpy.ops.object.material_slot_assign()
         self.setMode('OBJECT')
+        print("Top assigned")
 
         # PCBBottom
         self.clearMeshSelections()
@@ -423,6 +349,7 @@ class PCBImport(bpy.types.Operator):
         self.setMode('EDIT')
         bpy.ops.object.material_slot_assign()
         self.setMode('OBJECT')
+        print("Bottom assigned")
 
         # PCB Substrate
 
@@ -440,6 +367,7 @@ class PCBImport(bpy.types.Operator):
         self.setMode('EDIT')
         bpy.ops.object.material_slot_assign()
         self.setMode('OBJECT')
+        print("Assignments done");
 
     def selectTopView(self):
         self.clearMeshSelections()
@@ -495,8 +423,10 @@ class PCBImport(bpy.types.Operator):
             z = 0
             yrot = 0
             if side == "bottom":
-                z = -1.6
+                z = -0.0;
                 yrot = 180 / 57.2957795
+            else:
+                z = 1.6;
             loc = tuple(float(val) for val in (x, y, z))
             frot = float(rot)
             try:
@@ -592,8 +522,6 @@ class PCBImport(bpy.types.Operator):
                 self.deleteExistingBoard()
                 self.deleteOrphans()
                 self.importOutline()
-                self.drillBoard()
-                self.extrudeBoard()
                 self.loadMaterials()
                 self.assignMaterials()
                 self.selectTopView()

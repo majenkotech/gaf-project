@@ -9,6 +9,9 @@ use POSIX ":sys_wait_h";
 use File::Copy;
 use Storable;
 use IPC::Open3;
+use File::Spec;
+
+open(NULL, ">", File::Spec->devnull);
 
 Gtk2->init;
 
@@ -144,9 +147,6 @@ $window->show_all();
 updateMenus();
 
 Gtk2->main();
-
-
-
 
 # File menu actions
 
@@ -316,7 +316,7 @@ sub action_project_gschem {
         $runtime->{pids}->{gschem} = $pid;
         $runtime->{handles}->{gschem}->{stdin} = $rd;
         $runtime->{handles}->{gschem}->{stdout} = $wr;
-        $runtime->{handles}->{gschem}->{stderr} = $er;
+#        $runtime->{handles}->{gschem}->{stderr} = $er;
     }
 }
 
@@ -403,7 +403,8 @@ sub action_project_pcb {
     push(@args, $filename);
 
     #my $pid = open(my $rd, "|-");
-    my $pid = open3(my $rd, my $wr, my $er, "-");
+    #my $pid = open3(my $rd, my $wr, my $er, "-");
+    my $pid = open3(my $rd, my $wr, ">&NULL", "-");
 
     if (!$pid) {
         exec "pcb-rnd", @args;
@@ -411,7 +412,7 @@ sub action_project_pcb {
         $runtime->{pids}->{pcb} = $pid;
         $runtime->{handles}->{pcb}->{stdin} = $rd;
         $runtime->{handles}->{pcb}->{stdout} = $wr;
-        $runtime->{handles}->{pcb}->{stderr} = $er;
+#        $runtime->{handles}->{pcb}->{stderr} = $er;
     }
 }
 
@@ -525,6 +526,8 @@ sub action_tools_export_pdf() {
         my $pdf = sprintf("%s/%s.pdf", $dir, $project->{name});
         my @args = (
             "export",
+            "--no-color",
+            "--format=pdf",
             "-o",
             $pdf
         );
@@ -532,7 +535,7 @@ sub action_tools_export_pdf() {
             push(@args, "$dir/$schem");
         }
 
-        vsystem("gaf", @args);
+        vsystem("lepton-cli", @args);
 
         @args = ($pdf);
         vsystem("evince", @args);
@@ -705,6 +708,15 @@ sub action_tools_export_blender() {
             "XY",
             "--xyfile",
             "$stub.xy",
+            $pcb
+        );
+        vsystem("pcb-rnd", @args);
+
+        @args = (
+            "-x",
+            "stl",
+            "--outfile",
+            "$stub.stl",
             $pcb
         );
         vsystem("pcb-rnd", @args);
@@ -1011,13 +1023,13 @@ sub handleSigChld() {
                 $runtime->{pids}->{gschem} = undef;
                 $runtime->{handles}->{gschem}->{stdin} = undef;
                 $runtime->{handles}->{gschem}->{stdout} = undef;
-                $runtime->{handles}->{gschem}->{stderr} = undef;
+#                $runtime->{handles}->{gschem}->{stderr} = undef;
             }
             if ($runtime->{pids}->{pcb} == $child) {
                 $runtime->{pids}->{pcb} = undef;
                 $runtime->{handles}->{pcb}->{stdin} = undef;
                 $runtime->{handles}->{pcb}->{stdout} = undef;
-                $runtime->{handles}->{pcb}->{stderr} = undef;
+#                $runtime->{handles}->{pcb}->{stderr} = undef;
             }
             if ($runtime->{pids}->{render} == $child) {
                 $runtime->{pids}->{render} = undef;
@@ -1139,16 +1151,17 @@ sub getBoardBoundingBox() {
 
     my $stdin;
     my $stdout;
-    my $stderr;
+#    my $stderr;
     my $pid = -1;
 
     if ($runtime->{handles}->{pcb}->{stdin}) {
         $stdin = $runtime->{handles}->{pcb}->{stdin};
         $stdout = $runtime->{handles}->{pcb}->{stdout};
-        $stderr = $runtime->{handles}->{pcb}->{stderr};
+#        $stderr = $runtime->{handles}->{pcb}->{stderr};
         print "Using existing process\n";
     } else {
-        $pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
+        #$pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
+        $pid = open3($stdin, $stdout, ">&NULL", "pcb-rnd", "--gui", "batch", $filename);
         print "Starting new process for outline query\n";
     }
 #propset(p/trace/thickness, 1nm)
@@ -1233,8 +1246,6 @@ print "$out\n" unless $out eq " <void>";
     $bbox->{outline}->{y}->{min} += 0.075;
     $bbox->{outline}->{y}->{max} -= 0.075;
 
-    print Dumper($bbox);
-
     return $bbox;
 }
 
@@ -1253,17 +1264,18 @@ sub getDoNotPopulateList() {
 
     my $stdin;
     my $stdout;
-    my $stderr;
+#    my $stderr;
     my $pid = -1;
 
     if ($runtime->{handles}->{pcb}->{stdin}) {
         print "Using existing process\n";
         $stdin = $runtime->{handles}->{pcb}->{stdin};
         $stdout = $runtime->{handles}->{pcb}->{stdout};
-        $stderr = $runtime->{handles}->{pcb}->{stderr};
+#        $stderr = $runtime->{handles}->{pcb}->{stderr};
     } else {
         print "Starting new process for Do Not Populate query\n";
-        $pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
+        #$pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
+        $pid = open3($stdin, $stdout, ">&NULL", "pcb-rnd", "--gui", "batch", $filename);
     }
 
     print $stdin qq{
@@ -1308,17 +1320,18 @@ sub getRotationOverrideList() {
 
     my $stdin;
     my $stdout;
-    my $stderr;
+#    my $stderr;
     my $pid = -1;
 
     if ($runtime->{handles}->{pcb}->{stdin}) {
         print "Using existing process\n";
         $stdin = $runtime->{handles}->{pcb}->{stdin};
         $stdout = $runtime->{handles}->{pcb}->{stdout};
-        $stderr = $runtime->{handles}->{pcb}->{stderr};
+#        $stderr = $runtime->{handles}->{pcb}->{stderr};
     } else {
         print "Starting new process for Rotation Override query\n";
-        $pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
+        #$pid = open3($stdin, $stdout, $stderr, "pcb-rnd", "--gui", "batch", $filename);
+        $pid = open3($stdin, $stdout, ">&NULL", "pcb-rnd", "--gui", "batch", $filename);
     }
 
     print $stdin qq{
@@ -1339,7 +1352,7 @@ query(eval, '@.a.rotate == "90" thus @.refdes')
     print $stdin qq{
 query(eval, '@.a.rotate == "180" thus @.refdes')
 };
-    my $refdes;
+    
     while (my $out = <$stdout>) {
         chomp($out);
         if ($out =~ /^eval statistics: /) {
@@ -1354,7 +1367,7 @@ query(eval, '@.a.rotate == "180" thus @.refdes')
     print $stdin qq{
 query(eval, '@.a.rotate == "270" thus @.refdes')
 };
-    my $refdes;
+   
     while (my $out = <$stdout>) {
         chomp($out);
         if ($out =~ /^eval statistics: /) {
@@ -1368,7 +1381,7 @@ query(eval, '@.a.rotate == "270" thus @.refdes')
     print $stdin qq{
 query(eval, '@.a.rotate == "360" thus @.refdes')
 };
-    my $refdes;
+  
     while (my $out = <$stdout>) {
         chomp($out);
         if ($out =~ /^eval statistics: /) {
@@ -1382,7 +1395,7 @@ query(eval, '@.a.rotate == "360" thus @.refdes')
     print $stdin qq{
 query(eval, '@.a.rotate == "0" thus @.refdes')
 };
-    my $refdes;
+ 
     while (my $out = <$stdout>) {
         chomp($out);
         if ($out =~ /^eval statistics: /) {
@@ -1403,8 +1416,6 @@ query(eval, '@.a.rotate == "0" thus @.refdes')
         close($stdout);
 #        close($stderr);
     }
-
-print Dumper($refdes);
 
     return $refdes;
 }
