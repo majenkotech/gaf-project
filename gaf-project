@@ -700,10 +700,9 @@ sub action_tools_export_blender() {
         );
         vsystem("pcb-rnd", @args);
         @args = (
-            "-x",
-            "XY",
-            "--xyfile",
-            "$stub.xy",
+            "-x", "XY",
+            "--xy-unit", "mm",
+            "--xyfile", "$stub.xy",
             $pcb
         );
         vsystem("pcb-rnd", @args);
