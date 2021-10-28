@@ -136,7 +136,7 @@ $treeWindow->set_policy('automatic', 'automatic');
 $treeWindow->set_shadow_type('in');
 $treeWindow->set_border_width(5);
 
-$vbox->pack_start($treeWindow, TRUE, TRUE, 0);
+#$vbox->pack_start($treeWindow, TRUE, TRUE, 0);
 
 $vbox->show_all();
 
@@ -360,42 +360,42 @@ sub action_project_pcb {
         $filename = $pcbfilename;
     }
 
-    my @stat = stat($filename);
-    my $when = $stat[9];
-    my $backup = "";
-
-    opendir(my $dh, $dir);
-    my $fn = sprintf("%s.lht", $project->{name});
-    while (my $scanfile = readdir($dh)) {
-        if ($scanfile =~ /^\Q$fn\E\.(\d+)\.backup$/) {
-            printf("Backup %s found\n", $scanfile);
-            my $fullf = sprintf("%s/%s", $dir, $scanfile);
-            @stat = stat($fullf);
-            my $tester = $stat[9];
-            if ($tester > $when) {
-                $when = $tester;
-                $backup = $scanfile;
-            }
-        }
-    }
-
-    if ($backup ne "") {
-        my $flags =  [qw/modal destroy-with-parent/];
-        printf("Potentially newer file %s found!\n", $backup);
-        my $confirm = Gtk2::Dialog->new_with_buttons("Backup found", $window, $flags, 'Yes'=>'yes', 'No'=>'no');
-        my $info = Gtk2::Label->new("A newer backup file has been found.");
-#\nWould you like to open that instead?");
-        my $ca = $confirm->get_content_area();
-
-        $ca->pack_start($info, FALSE, FALSE, 0);
-        
-        my $response = $confirm->run;
-        $confirm->destroy;
-        if ($response eq 'yes') {
-            rename($filename, "$filename.saved");
-            rename("$dir/$backup", "$filename");
-        }
-    }
+#    my @stat = stat($filename);
+#    my $when = $stat[9];
+#    my $backup = "";
+#
+#    opendir(my $dh, $dir);
+#    my $fn = sprintf("%s.lht", $project->{name});
+#    while (my $scanfile = readdir($dh)) {
+#        if ($scanfile =~ /^\Q$fn\E\.(\d+)\.backup$/) {
+#            printf("Backup %s found\n", $scanfile);
+#            my $fullf = sprintf("%s/%s", $dir, $scanfile);
+#            @stat = stat($fullf);
+#            my $tester = $stat[9];
+#            if ($tester > $when) {
+#                $when = $tester;
+#                $backup = $scanfile;
+#            }
+#        }
+#    }
+#
+#    if ($backup ne "") {
+#        my $flags =  [qw/modal destroy-with-parent/];
+#        printf("Potentially newer file %s found!\n", $backup);
+#        my $confirm = Gtk2::Dialog->new_with_buttons("Backup found", $window, $flags, 'Yes'=>'yes', 'No'=>'no');
+#        my $info = Gtk2::Label->new("A newer backup file has been found.");
+##\nWould you like to open that instead?");
+#        my $ca = $confirm->get_content_area();
+#
+#        $ca->pack_start($info, FALSE, FALSE, 0);
+#        
+#        my $response = $confirm->run;
+#        $confirm->destroy;
+#        if ($response eq 'yes') {
+#            rename($filename, "$filename.saved");
+#            rename("$dir/$backup", "$filename");
+#        }
+#    }
 
 
     my @args;
@@ -425,6 +425,7 @@ sub action_project_gsch2pcb {
         saveGSchem();
 #        savePCB();
 
+
         usleep(100000);
         my @args = getSchematics();
         unshift(@args, "--pgskip");
@@ -437,26 +438,22 @@ sub action_project_gsch2pcb {
                 print {$runtime->{handles}->{gschem}->{stdin}} "revert $schem\n";
             }
         }
+
+        my $dir = getProjectDir();
+        my $tdxfilename = sprintf("%s/%s.tdx", $dir, $project->{name});
+        @args = (
+            "-g", "tEDAx",
+            "-o", $tdxfilename
+        );
+        my @schems = getSchematics();
+        foreach my $sch (@schems) {
+            push @args, $sch;
+        }
+        vsystem("lepton-netlist", @args);
+
         if ($runtime->{handles}->{pcb}->{stdin}) {
-            my @paths = getSchematics();
-
-            print {$runtime->{handles}->{pcb}->{stdin}} "Deselect(All)\n";
-
-#ImportSch(setup, gnetlist, sheet1.sch, sheet2.sch)
-            my $command = "ImportSch(setup, gnetlist,";
-            foreach my $path (@paths) {
-                if ($command ne "ImportSch(setup, gnetlist,") {
-                    $command += " $command,";
-                }
-                $command = "$command\"$path\"";
-            }
-            $command = "$command)\n";
-
-            print {$runtime->{handles}->{pcb}->{stdin}} $command;
-
+            print {$runtime->{handles}->{pcb}->{stdin}} "ImportSch(setup, tEDAx, $tdxfilename)\n";
             print {$runtime->{handles}->{pcb}->{stdin}} "ImportSch()\n";
-
-            print {$runtime->{handles}->{pcb}->{stdin}} "Delete(Selected)\n";
         }
         exit(0);
     }
@@ -591,10 +588,9 @@ sub action_tools_export_gerber() {
         );
         vsystem("pcb-rnd", @args);
         @args = (
-            "-x",
-            "XY",
-            "--xyfile",
-            "$stub.xy",
+            "-x", "XY",
+            "--xy-unit", "mm",
+            "--xyfile", "$stub.xy",
             $pcb
         );
 
