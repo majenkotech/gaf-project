@@ -8,3 +8,12 @@ automated export functions (Schematic as PCB, PCB as Gerber files, and [requirin
 so don't use it] export to PNGs/SVGs for Blender rendering).
 
 It is still very much a work-in-progress, and will eventually be converted to pure C instead of Perl.
+
+----
+
+Attribution
+-----------
+
+GAF Project application icon by *madness:*
+
+* https://www.flaticon.com/free-icon/pcb-board_7884253

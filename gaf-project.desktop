@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Name=GAF Project Manager
+Comment=gEDA GAF Project Management Console
+Exec=/usr/bin/gaf-project
+Terminal=false
+Type=Application
+Icon=gaf-project
+Categories=Electronics
+StartupNotify=false
