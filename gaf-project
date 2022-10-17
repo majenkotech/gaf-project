@@ -141,6 +141,7 @@ $treeWindow->set_border_width(5);
 $vbox->show_all();
 
 $window->add($vbox);
+$window->set_default_size(500,80);
 $window->set_title("gEDA GAF Project");
 $window->show_all();
 
